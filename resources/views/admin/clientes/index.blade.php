@@ -25,7 +25,7 @@
                             <th style="text-align: center">Nro</th>
                             <th style="text-align: center">Documento</th>
                             <th style="text-align: center">Apellidos y nombres</th>
-                            <th style="text-align: center">Género</th>
+                            <th style="text-align: center">Categoría</th>
                             <th style="text-align: center">Email</th>
                             <th style="text-align: center">Celular</th>
                             <th style="text-align: center">Ref. Celular</th>

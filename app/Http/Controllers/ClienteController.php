@@ -7,30 +7,19 @@ use Illuminate\Http\Request;
 
 class ClienteController extends Controller
 {
-    /**
-     * Display a listing of the resource.
-     */
     public function index()
     {
         $clientes = Cliente::all();
-        return view('admin.clientes.index',compact('clientes'));
+        return view('admin.clientes.index', compact('clientes'));
     }
 
-    /**
-     * Show the form for creating a new resource.
-     */
     public function create()
     {
         return view('admin.clientes.create');
     }
 
-    /**
-     * Store a newly created resource in storage.
-     */
     public function store(Request $request)
     {
-        //$datos = request()->all();
-        //return response()->json($datos);
         $request->validate([
             'nro_documento' => 'required|unique:clientes',
             'nombres' => 'required',
@@ -50,41 +39,36 @@ class ClienteController extends Controller
         $cliente->email = $request->email;
         $cliente->celular = $request->celular;
         $cliente->ref_celular = $request->ref_celular;
+
+        // Nuevos campos
+        $cliente->nombre_referencia1 = $request->nombre_referencia1;
+        $cliente->telefono_referencia1 = $request->telefono_referencia1;
+        $cliente->nombre_referencia2 = $request->nombre_referencia2;
+        $cliente->telefono_referencia2 = $request->telefono_referencia2;
+
         $cliente->save();
 
         return redirect()->route('admin.clientes.index')
-            ->with('mensaje','Se registro al cliente de la manera correcta')
-            ->with('icono','success');
-
+            ->with('mensaje', 'Se registró al cliente de la manera correcta')
+            ->with('icono', 'success');
     }
 
-    /**
-     * Display the specified resource.
-     */
     public function show($id)
     {
         $cliente = Cliente::find($id);
-        return view('admin.clientes.show',compact('cliente'));
+        return view('admin.clientes.show', compact('cliente'));
     }
 
-    /**
-     * Show the form for editing the specified resource.
-     */
     public function edit($id)
     {
         $cliente = Cliente::find($id);
-        return view('admin.clientes.edit',compact('cliente'));
+        return view('admin.clientes.edit', compact('cliente'));
     }
 
-    /**
-     * Update the specified resource in storage.
-     */
     public function update(Request $request, $id)
     {
-        //$datos = request()->all();
-        //return response()->json($datos);
         $request->validate([
-            'nro_documento' => 'required|unique:clientes,nro_documento,'.$id,
+            'nro_documento' => 'required|unique:clientes,nro_documento,' . $id,
             'nombres' => 'required',
             'apellidos' => 'required',
             'fecha_nacimiento' => 'required',
@@ -102,21 +86,25 @@ class ClienteController extends Controller
         $cliente->email = $request->email;
         $cliente->celular = $request->celular;
         $cliente->ref_celular = $request->ref_celular;
+
+        // Nuevos campos
+        $cliente->nombre_referencia1 = $request->nombre_referencia1;
+        $cliente->telefono_referencia1 = $request->telefono_referencia1;
+        $cliente->nombre_referencia2 = $request->nombre_referencia2;
+        $cliente->telefono_referencia2 = $request->telefono_referencia2;
+
         $cliente->save();
 
         return redirect()->route('admin.clientes.index')
-            ->with('mensaje','Se modifico los datos del cliente de la manera correcta')
-            ->with('icono','success');
+            ->with('mensaje', 'Se modificó el cliente de la manera correcta')
+            ->with('icono', 'success');
     }
 
-    /**
-     * Remove the specified resource from storage.
-     */
     public function destroy($id)
     {
         Cliente::destroy($id);
         return redirect()->route('admin.clientes.index')
-            ->with('mensaje','Se elimino al cliente de la manera correcta')
-            ->with('icono','success');
+            ->with('mensaje', 'Se eliminó al cliente de la manera correcta')
+            ->with('icono', 'success');
     }
 }

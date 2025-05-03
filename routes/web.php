@@ -17,7 +17,8 @@ Route::get('/', function () {
     return redirect('/admin');
 });
 
-Auth::routes();
+Auth::routes(['register' => false]);
+
 
 Route::get('/home', [App\Http\Controllers\AdminController::class, 'index'])->name('admin.index.home')->middleware('auth');
 

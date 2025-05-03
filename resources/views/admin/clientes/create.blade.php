@@ -62,7 +62,7 @@
                             </div>
                             <div class="col-md-3">
                                 <div class="form-group">
-                                    <label for="">Fecha de nacimiento</label><b> (*)</b>
+                                    <label for="">Fecha de ingreso</label><b> (*)</b>
                                     <div class="input-group mb-3">
                                         <div class="input-group-prepend">
                                             <span class="input-group-text"><i class="fas fa-calendar"></i></span>
@@ -79,14 +79,14 @@
                         <div class="row">
                             <div class="col-md-3">
                                 <div class="form-group">
-                                    <label for="">Género</label><b> (*)</b>
+                                    <label for="">Categoria</label><b> (*)</b>
                                     <div class="input-group mb-3">
                                         <div class="input-group-prepend">
                                             <span class="input-group-text"><i class="fas fa-user-check"></i></span>
                                         </div>
                                         <select name="genero" id="" class="form-control">
-                                            <option value="MASCULINO">MASCULINO</option>
-                                            <option value="FEMENINO">FEMENINO</option>
+                                            <option value="Nuevo">Nuevo</option>
+                                            <option value="Bronce">Bronce</option>
                                         </select>
                                     </div>
                                 </div>
@@ -135,6 +135,34 @@
                             </div>
                         </div>
                         <hr>
+                        <div class="row">
+    <div class="col-md-3">
+        <div class="form-group">
+            <label for="">Nombre de referencia 1</label>
+            <input type="text" class="form-control" name="nombre_referencia1" placeholder="Escriba aquí...">
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="form-group">
+            <label for="">Teléfono de referencia 1</label>
+            <input type="text" class="form-control" name="telefono_referencia1" placeholder="Escriba aquí...">
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="form-group">
+            <label for="">Nombre de referencia 2</label>
+            <input type="text" class="form-control" name="nombre_referencia2" placeholder="Escriba aquí...">
+        </div>
+    </div>
+    <div class="col-md-3">
+        <div class="form-group">
+            <label for="">Teléfono de referencia 2</label>
+            <input type="text" class="form-control" name="telefono_referencia2" placeholder="Escriba aquí...">
+        </div>
+    </div>
+</div>
+
+
                         <div class="row">
                             <div class="col-md-12">
                                 <div class="form-group">
