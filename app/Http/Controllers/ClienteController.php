@@ -28,10 +28,7 @@ class ClienteController extends Controller
             'email' => 'required',
             'celular' => 'required',
             'ref_celular' => 'required',
-<<<<<<< HEAD
             'direccion' => 'required',
-=======
->>>>>>> 88f82b23b70cfaeeb8a0002d12a9c1d2ac43ee5c
         ]);
 
         $cliente = new Cliente();
@@ -43,12 +40,8 @@ class ClienteController extends Controller
         $cliente->email = $request->email;
         $cliente->celular = $request->celular;
         $cliente->ref_celular = $request->ref_celular;
-<<<<<<< HEAD
         $cliente->direccion = $request->direccion;
-=======
 
-        // Nuevos campos
->>>>>>> 88f82b23b70cfaeeb8a0002d12a9c1d2ac43ee5c
         $cliente->nombre_referencia1 = $request->nombre_referencia1;
         $cliente->telefono_referencia1 = $request->telefono_referencia1;
         $cliente->nombre_referencia2 = $request->nombre_referencia2;
@@ -83,10 +76,7 @@ class ClienteController extends Controller
             'email' => 'required',
             'celular' => 'required',
             'ref_celular' => 'required',
-<<<<<<< HEAD
             'direccion' => 'required',
-=======
->>>>>>> 88f82b23b70cfaeeb8a0002d12a9c1d2ac43ee5c
         ]);
 
         $cliente = Cliente::find($id);
@@ -98,12 +88,8 @@ class ClienteController extends Controller
         $cliente->email = $request->email;
         $cliente->celular = $request->celular;
         $cliente->ref_celular = $request->ref_celular;
-<<<<<<< HEAD
         $cliente->direccion = $request->direccion;
-=======
 
-        // Nuevos campos
->>>>>>> 88f82b23b70cfaeeb8a0002d12a9c1d2ac43ee5c
         $cliente->nombre_referencia1 = $request->nombre_referencia1;
         $cliente->telefono_referencia1 = $request->telefono_referencia1;
         $cliente->nombre_referencia2 = $request->nombre_referencia2;
@@ -123,8 +109,4 @@ class ClienteController extends Controller
             ->with('mensaje', 'Se eliminó al cliente de la manera correcta')
             ->with('icono', 'success');
     }
-<<<<<<< HEAD
 }
-=======
-}
->>>>>>> 88f82b23b70cfaeeb8a0002d12a9c1d2ac43ee5c
