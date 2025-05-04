@@ -149,92 +149,116 @@
 @stop
 
 @section('js')
-    <script>
-        $('.select2').select2({});
+@section('js')
+<script>
+    let tasaAutorizada = 20; // Por defecto
 
-        $('.select2_montos').select2({
-            tags: true,
-            placeholder: "Selecciona o escribe un monto...",
-            allowClear: true,
-            createTag: function (params) {
-                var term = params.term.trim();
-                if (isNaN(term) || parseInt(term) <= 0) {
-                    return null;
-                }
-                return {
-                    id: term,
-                    text: new Intl.NumberFormat('es-CO').format(term)
-                }
-            },
-            templateSelection: function (data) {
-                if (data.id) {
-                    return '$ ' + new Intl.NumberFormat('es-CO').format(data.id);
-                }
-                return data.text;
-            },
-            templateResult: function (data) {
-                if (data.id) {
-                    return '$ ' + new Intl.NumberFormat('es-CO').format(data.id);
-                }
-                return data.text;
+    $('.select2').select2({});
+    $('.select2_montos').select2({
+        tags: true,
+        placeholder: "Selecciona o escribe un monto...",
+        allowClear: true,
+        createTag: function (params) {
+            var term = params.term.trim();
+            if (isNaN(term) || parseInt(term) <= 0) {
+                return null;
             }
-        });
-
-        $('.select2').on('change', function () {
-            var id = $(this).val();
-            if (id) {
-                $.ajax({
-                    url: "{{ url('/admin/prestamos/cliente/') }}/" + id,
-                    type: 'GET',
-                    success: function (cliente) {
-                        $('#contenido_cliente').show();
-                        $('#nro_documento').val(cliente.nro_documento);
-                        $('#nombres').val(cliente.nombres);
-                        $('#apellidos').val(cliente.apellidos);
-                        $('#fecha_nacimiento').val(cliente.fecha_nacimiento);
-                        $('#genero').val(cliente.genero);
-                        $('#email').val(cliente.email);
-                        $('#celular').val(cliente.celular);
-                        $('#ref_celular').val(cliente.ref_celular);
-                    },
-                    error: function () {
-                        alert('No se pudo obtener la información del cliente.');
-                    }
-                });
+            return {
+                id: term,
+                text: new Intl.NumberFormat('es-CO').format(term)
             }
-        });
-
-        // Validar % interés
-        $('#tasa_interes').on('change', function () {
-            const tasa = parseFloat($(this).val());
-            if (tasa !== 20) {
-                const clave = prompt('Has ingresado una tasa diferente al 20%. Ingresa la clave de autorización o contacta al administrador Victor o David:');
-                if (clave !== 'autorizado2025') {
-                    alert('Clave incorrecta. Solo se permite 20% de interés.');
-                    $(this).val(20);
-                }
+        },
+        templateSelection: function (data) {
+            if (data.id) {
+                return '$ ' + new Intl.NumberFormat('es-CO').format(data.id);
             }
-        });
-
-        function calcularPrestamo() {
-            const montoPrestado = parseFloat($('#monto_prestado').val().replace(/\./g, '').replace(/\$/g, '').trim());
-            const nroCuotas = parseInt($('#nro_cuotas').val());
-
-            if (isNaN(montoPrestado) || isNaN(nroCuotas) || montoPrestado <= 0 || nroCuotas <= 0) {
-                alert("Por favor ingrese valores válidos.");
-                return;
+            return data.text;
+        },
+        templateResult: function (data) {
+            if (data.id) {
+                return '$ ' + new Intl.NumberFormat('es-CO').format(data.id);
             }
-
-            const interes = montoPrestado * 0.20; // SIEMPRE 20%
-            const totalCancelar = montoPrestado + interes;
-            const cuota = totalCancelar / nroCuotas;
-
-            $('#monto_cuota').val('$ ' + cuota.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, '.'));
-            $('#monto_interes').val('$ ' + interes.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, '.'));
-            $('#monto_final').val('$ ' + totalCancelar.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, '.'));
-
-            $('#monto_cuota2').val(cuota.toFixed(2));
-            $('#monto_final2').val(totalCancelar.toFixed(2));
+            return data.text;
         }
-    </script>
+    });
+
+    $('.select2').on('change', function () {
+        var id = $(this).val();
+        if (id) {
+            $.ajax({
+                url: "{{ url('/admin/prestamos/cliente/') }}/" + id,
+                type: 'GET',
+                success: function (cliente) {
+                    $('#contenido_cliente').show();
+                    $('#nro_documento').val(cliente.nro_documento);
+                    $('#nombres').val(cliente.nombres);
+                    $('#apellidos').val(cliente.apellidos);
+                    $('#fecha_nacimiento').val(cliente.fecha_nacimiento);
+                    $('#genero').val(cliente.genero);
+                    $('#email').val(cliente.email);
+                    $('#celular').val(cliente.celular);
+                    $('#ref_celular').val(cliente.ref_celular);
+                },
+                error: function () {
+                    alert('No se pudo obtener la información del cliente.');
+                }
+            });
+        }
+    });
+
+    // Validar % interés
+    $('#tasa_interes').on('change', function () {
+        const tasa = parseFloat($(this).val());
+        if (tasa !== 20) {
+            const clave = prompt('Has ingresado una tasa diferente al 20%. Ingresa la clave de autorización o contacta al administrador Victor o David:');
+            if (clave !== 'autorizado2025') {
+                alert('Clave incorrecta. Solo se permite 20% de interés.');
+                $(this).val(20);
+                tasaAutorizada = 20;
+            } else {
+                alert('Tasa autorizada correctamente.');
+                tasaAutorizada = tasa;
+            }
+        } else {
+            tasaAutorizada = 20;
+        }
+
+        calcularPrestamo();
+    });
+
+    function calcularPrestamo() {
+        let montoRaw = $('#monto_prestado').val();
+        if (!montoRaw) {
+            return; // Evita mostrar alerta prematura
+        }
+        montoRaw = montoRaw.toString().replace(/[^\d]/g, ''); // Quita $ . , espacios
+        const montoPrestado = parseFloat(montoRaw);
+        const nroCuotas = parseInt($('#nro_cuotas').val());
+
+        if (isNaN(montoPrestado) || isNaN(nroCuotas) || montoPrestado <= 0 || nroCuotas <= 0) {
+            return; // Evita alertas mientras el usuario escribe
+        }
+
+        const interes = montoPrestado * (tasaAutorizada / 100);
+        const totalCancelar = montoPrestado + interes;
+        const cuota = totalCancelar / nroCuotas;
+
+        $('#monto_cuota').val('$ ' + cuota.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, '.'));
+        $('#monto_interes').val('$ ' + interes.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, '.'));
+        $('#monto_final').val('$ ' + totalCancelar.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, '.'));
+
+        $('#monto_cuota2').val(cuota.toFixed(2));
+        $('#monto_final2').val(totalCancelar.toFixed(2));
+    }
+
+    // Recalcular si se cambian los valores
+    $('#monto_prestado').on('change', function () {
+        setTimeout(calcularPrestamo, 100); // Espera a que select2 termine de asignar el valor
+    });
+
+    $('#nro_cuotas').on('change keyup', calcularPrestamo);
+</script>
+
+@stop
+
 @stop
