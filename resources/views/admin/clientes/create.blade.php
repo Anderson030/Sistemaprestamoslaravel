@@ -11,9 +11,8 @@
             <div class="card card-outline card-primary">
                 <div class="card-header">
                     <h3 class="card-title">Lleno los datos del formulario</h3>
-                    <!-- /.card-tools -->
                 </div>
-                <!-- /.card-header -->
+
                 <div class="card-body">
                     <form action="{{url('admin/clientes/create')}}" method="post">
                         @csrf
@@ -84,7 +83,7 @@
                                         <div class="input-group-prepend">
                                             <span class="input-group-text"><i class="fas fa-user-check"></i></span>
                                         </div>
-                                        <select name="genero" id="" class="form-control">
+                                        <select name="genero" class="form-control">
                                             <option value="Nuevo">Nuevo</option>
                                             <option value="Bronce">Bronce</option>
                                         </select>
@@ -134,52 +133,50 @@
                                 </div>
                             </div>
                         </div>
+
                         <hr>
+
                         <div class="row">
-<<<<<<< HEAD
-                        <div class="col-md-3">
-    <div class="form-group">
-        <label for="">Dirección</label><b> (*)</b>
-        <div class="input-group mb-3">
-            <div class="input-group-prepend">
-                <span class="input-group-text"><i class="fas fa-map-marker-alt"></i></span>
-            </div>
-            <input type="text" class="form-control" name="direccion" placeholder="Escriba aquí..." required>
-        </div>
-        @error('direccion')
-        <small style="color: red">{{$message}}</small>
-        @enderror
-    </div>
-</div>
+                            <div class="col-md-3">
+                                <div class="form-group">
+                                    <label for="">Dirección</label><b> (*)</b>
+                                    <div class="input-group mb-3">
+                                        <div class="input-group-prepend">
+                                            <span class="input-group-text"><i class="fas fa-map-marker-alt"></i></span>
+                                        </div>
+                                        <input type="text" class="form-control" name="direccion" placeholder="Escriba aquí..." required>
+                                    </div>
+                                    @error('direccion')
+                                    <small style="color: red">{{$message}}</small>
+                                    @enderror
+                                </div>
+                            </div>
 
-=======
->>>>>>> 88f82b23b70cfaeeb8a0002d12a9c1d2ac43ee5c
-    <div class="col-md-3">
-        <div class="form-group">
-            <label for="">Nombre de referencia 1</label>
-            <input type="text" class="form-control" name="nombre_referencia1" placeholder="Escriba aquí...">
-        </div>
-    </div>
-    <div class="col-md-3">
-        <div class="form-group">
-            <label for="">Teléfono de referencia 1</label>
-            <input type="text" class="form-control" name="telefono_referencia1" placeholder="Escriba aquí...">
-        </div>
-    </div>
-    <div class="col-md-3">
-        <div class="form-group">
-            <label for="">Nombre de referencia 2</label>
-            <input type="text" class="form-control" name="nombre_referencia2" placeholder="Escriba aquí...">
-        </div>
-    </div>
-    <div class="col-md-3">
-        <div class="form-group">
-            <label for="">Teléfono de referencia 2</label>
-            <input type="text" class="form-control" name="telefono_referencia2" placeholder="Escriba aquí...">
-        </div>
-    </div>
-</div>
-
+                            <div class="col-md-3">
+                                <div class="form-group">
+                                    <label for="">Nombre de referencia 1</label>
+                                    <input type="text" class="form-control" name="nombre_referencia1" placeholder="Escriba aquí...">
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="form-group">
+                                    <label for="">Teléfono de referencia 1</label>
+                                    <input type="text" class="form-control" name="telefono_referencia1" placeholder="Escriba aquí...">
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="form-group">
+                                    <label for="">Nombre de referencia 2</label>
+                                    <input type="text" class="form-control" name="nombre_referencia2" placeholder="Escriba aquí...">
+                                </div>
+                            </div>
+                            <div class="col-md-3">
+                                <div class="form-group">
+                                    <label for="">Teléfono de referencia 2</label>
+                                    <input type="text" class="form-control" name="telefono_referencia2" placeholder="Escriba aquí...">
+                                </div>
+                            </div>
+                        </div>
 
                         <div class="row">
                             <div class="col-md-12">
@@ -189,23 +186,16 @@
                                 </div>
                             </div>
                         </div>
+
                     </form>
                 </div>
-                <!-- /.card-body -->
             </div>
-            <!-- /.card -->
         </div>
     </div>
 @stop
 
 @section('css')
-
 @stop
 
 @section('js')
-
-<<<<<<< HEAD
 @stop
-=======
-@stop
->>>>>>> 88f82b23b70cfaeeb8a0002d12a9c1d2ac43ee5c
