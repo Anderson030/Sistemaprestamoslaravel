@@ -14,6 +14,7 @@ return new class extends Migration
         Schema::create('clientes', function (Blueprint $table) {
             $table->id();
 
+<<<<<<< HEAD
             $table->string('nro_documento', 20)->unique();
             $table->string('nombres', 100);
             $table->string('apellidos', 100);
@@ -29,6 +30,16 @@ return new class extends Migration
             $table->string('telefono_referencia1')->nullable();
             $table->string('nombre_referencia2')->nullable();
             $table->string('telefono_referencia2')->nullable();
+=======
+            $table->string('nro_documento',20)->unique();
+            $table->string('nombres',100);
+            $table->string('apellidos',100);
+            $table->date('fecha_nacimiento');
+            $table->string('genero');
+            $table->string('email',100);
+            $table->string('celular',20);
+            $table->string('ref_celular');
+>>>>>>> 88f82b23b70cfaeeb8a0002d12a9c1d2ac43ee5c
 
             $table->timestamps();
         });

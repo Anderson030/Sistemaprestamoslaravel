@@ -19,11 +19,18 @@ class Cliente extends Model
         'email',
         'celular',
         'ref_celular',
+<<<<<<< HEAD
         'direccion', // <-- Campo agregado
         'nombre_referencia1', // <-- Campo agregado
         'telefono_referencia1', // <-- Campo agregado
         'nombre_referencia2', // <-- Campo agregado
         'telefono_referencia2', // <-- Campo agregado
+=======
+        'nombre_referencia1',
+        'telefono_referencia1',
+        'nombre_referencia2',
+        'telefono_referencia2',
+>>>>>>> 88f82b23b70cfaeeb8a0002d12a9c1d2ac43ee5c
     ];
 
     // Relación: Un cliente tiene muchos préstamos

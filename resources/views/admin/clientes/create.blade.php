@@ -136,6 +136,7 @@
                         </div>
                         <hr>
                         <div class="row">
+<<<<<<< HEAD
                         <div class="col-md-3">
     <div class="form-group">
         <label for="">Dirección</label><b> (*)</b>
@@ -151,6 +152,8 @@
     </div>
 </div>
 
+=======
+>>>>>>> 88f82b23b70cfaeeb8a0002d12a9c1d2ac43ee5c
     <div class="col-md-3">
         <div class="form-group">
             <label for="">Nombre de referencia 1</label>
@@ -201,4 +204,8 @@
 
 @section('js')
 
+<<<<<<< HEAD
 @stop
+=======
+@stop
+>>>>>>> 88f82b23b70cfaeeb8a0002d12a9c1d2ac43ee5c
