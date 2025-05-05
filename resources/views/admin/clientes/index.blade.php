@@ -41,7 +41,7 @@
                                 <td style="text-align: center">{{$contador++}}</td>
                                 <td>{{$cliente->nro_documento}}</td>
                                 <td>{{$cliente->apellidos." ".$cliente->nombres}}</td>
-                                <td>{{$cliente->genero}}</td>
+                                <td>{{ $cliente->categoria }}</td>
                                 <td>{{$cliente->email}}</td>
                                 <td>{{$cliente->celular}}</td>
                                 <td>{{$cliente->ref_celular}}</td>

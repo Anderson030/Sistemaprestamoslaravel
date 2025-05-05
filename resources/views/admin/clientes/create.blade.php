@@ -76,20 +76,23 @@
                         </div>
 
                         <div class="row">
-                            <div class="col-md-3">
-                                <div class="form-group">
-                                    <label for="">Categoria</label><b> (*)</b>
-                                    <div class="input-group mb-3">
-                                        <div class="input-group-prepend">
-                                            <span class="input-group-text"><i class="fas fa-user-check"></i></span>
-                                        </div>
-                                        <select name="genero" class="form-control">
-                                            <option value="Nuevo">Nuevo</option>
-                                            <option value="Bronce">Bronce</option>
-                                        </select>
+                        <div class="col-md-3">
+                            <div class="form-group">
+                                <label for="">Categoria</label><b> (*)</b>
+                                <div class="input-group mb-3">
+                                    <div class="input-group-prepend">
+                                        <span class="input-group-text"><i class="fas fa-user-check"></i></span>
                                     </div>
+                                    <select name="categoria" class="form-control" required>
+                                        <option value="Nuevo">Nuevo</option>
+                                        <option value="Bronce">Bronce</option>
+                                        <option value="Plata">Plata</option>
+                                        <option value="Oro">Oro</option>
+                                    </select>
                                 </div>
                             </div>
+                        </div>
+
                             <div class="col-md-3">
                                 <div class="form-group">
                                     <label for="">Email</label><b> (*)</b>

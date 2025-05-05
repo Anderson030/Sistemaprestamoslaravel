@@ -15,7 +15,7 @@ class Cliente extends Model
         'nombres',
         'apellidos',
         'fecha_nacimiento',
-        'genero',
+        'categoria', //  antes era el genero
         'email',
         'celular',
         'ref_celular',

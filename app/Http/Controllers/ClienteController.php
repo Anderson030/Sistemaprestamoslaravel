@@ -36,7 +36,7 @@ class ClienteController extends Controller
         $cliente->nombres = $request->nombres;
         $cliente->apellidos = $request->apellidos;
         $cliente->fecha_nacimiento = $request->fecha_nacimiento;
-        $cliente->genero = $request->genero;
+        $cliente->categoria = $request->categoria;
         $cliente->email = $request->email;
         $cliente->celular = $request->celular;
         $cliente->ref_celular = $request->ref_celular;
@@ -84,7 +84,7 @@ class ClienteController extends Controller
         $cliente->nombres = $request->nombres;
         $cliente->apellidos = $request->apellidos;
         $cliente->fecha_nacimiento = $request->fecha_nacimiento;
-        $cliente->genero = $request->genero;
+        $cliente->categoria = $request->categoria;
         $cliente->email = $request->email;
         $cliente->celular = $request->celular;
         $cliente->ref_celular = $request->ref_celular;

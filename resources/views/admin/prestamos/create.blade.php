@@ -42,10 +42,10 @@
                                 <div class="col-md-3"><label>Documento</label><input type="text" class="form-control" id="nro_documento" disabled></div>
                                 <div class="col-md-3"><label>Nombres</label><input type="text" class="form-control" id="nombres" disabled></div>
                                 <div class="col-md-3"><label>Apellidos</label><input type="text" class="form-control" id="apellidos" disabled></div>
-                                <div class="col-md-3"><label>Fecha de nacimiento</label><input type="date" class="form-control" id="fecha_nacimiento" disabled></div>
+                                <div class="col-md-3"><label>Fecha de ingreso a la plataforma</label><input type="date" class="form-control" id="fecha_nacimiento" disabled></div>
                             </div>
                             <div class="row">
-                                <div class="col-md-3"><label>Género</label><input type="text" class="form-control" id="genero" disabled></div>
+                                <div class="col-md-3"><label>Categoría</label><input type="text" class="form-control" id="categoria" disabled></div>
                                 <div class="col-md-3"><label>Email</label><input type="email" class="form-control" id="email" disabled></div>
                                 <div class="col-md-3"><label>Celular</label><input type="number" class="form-control" id="celular" disabled></div>
                                 <div class="col-md-3"><label>Referencia Celular</label><input type="number" class="form-control" id="ref_celular" disabled></div>
@@ -90,8 +90,6 @@
                                     <option value="Diario">Diario</option>
                                     <option value="Semanal">Semanal</option>
                                     <option value="Quincenal">Quincenal</option>
-                                    <option value="Mensual" selected>Mensual</option>
-                                    <option value="Anual">Anual</option>
                                 </select>
                             </div>
 
@@ -194,7 +192,7 @@
                     $('#nombres').val(cliente.nombres);
                     $('#apellidos').val(cliente.apellidos);
                     $('#fecha_nacimiento').val(cliente.fecha_nacimiento);
-                    $('#genero').val(cliente.genero);
+                    $('#categoria').val(cliente.categoria);
                     $('#email').val(cliente.email);
                     $('#celular').val(cliente.celular);
                     $('#ref_celular').val(cliente.ref_celular);
