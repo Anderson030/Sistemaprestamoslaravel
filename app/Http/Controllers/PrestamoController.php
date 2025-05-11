@@ -17,17 +17,24 @@ class PrestamoController extends Controller
      */
     public function index()
     {
-        $prestamos = Prestamo::all();
-
-        foreach ($prestamos as $prestamo){
-            $prestamo->tiene_cuota_pagada = Pago::whereNotNull('fecha_cancelado')
-            ->where('prestamo_id',$prestamo->id)
-            ->exists();
+        if (auth()->user()->hasRole('PRESTAMISTA')) {
+            // Solo préstamos creados por este prestamista
+            $prestamos = auth()->user()->prestamos;
+        } else {
+            // Admin, supervisor y dev ven todos los préstamos
+            $prestamos = Prestamo::all();
         }
-
-        return view('admin.prestamos.index',compact('prestamos'));
+    
+        // Evaluar si cada préstamo tiene al menos una cuota pagada
+        foreach ($prestamos as $prestamo) {
+            $prestamo->tiene_cuota_pagada = Pago::whereNotNull('fecha_cancelado')
+                ->where('prestamo_id', $prestamo->id)
+                ->exists();
+        }
+    
+        return view('admin.prestamos.index', compact('prestamos'));
     }
-
+    
     /**
      * Show the form for creating a new resource.
      */
@@ -122,10 +129,18 @@ class PrestamoController extends Controller
      */
     public function show($id)
     {
-        $prestamo = Prestamo::find($id);
-        $pagos = Pago::where('prestamo_id',$prestamo->id)->get();
-        return view('admin.prestamos.show',compact('prestamo','pagos'));
+        $prestamo = Prestamo::findOrFail($id);
+    
+        // Validar que si es prestamista, solo vea sus propios préstamos
+        if (auth()->user()->hasRole('PRESTAMISTA') && $prestamo->idusuario !== auth()->id()) {
+            abort(403, 'No tienes permiso para ver este préstamo.');
+        }
+    
+        $pagos = Pago::where('prestamo_id', $prestamo->id)->get();
+    
+        return view('admin.prestamos.show', compact('prestamo', 'pagos'));
     }
+    
 
     public function contratos($id){
 
@@ -143,10 +158,18 @@ class PrestamoController extends Controller
      */
     public function edit($id)
     {
-        $prestamo = Prestamo::find($id);
+        $prestamo = Prestamo::findOrFail($id);
+    
+        // Si es prestamista, solo puede editar sus propios préstamos
+        if (auth()->user()->hasRole('PRESTAMISTA') && $prestamo->idusuario !== auth()->id()) {
+            abort(403, 'No tienes permiso para editar este préstamo.');
+        }
+    
         $clientes = Cliente::all();
-        return view('admin.prestamos.edit',compact('prestamo','clientes'));
+    
+        return view('admin.prestamos.edit', compact('prestamo', 'clientes'));
     }
+    
 
     /**
      * Update the specified resource in storage.

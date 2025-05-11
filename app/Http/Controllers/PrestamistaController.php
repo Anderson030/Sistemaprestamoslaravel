@@ -12,22 +12,27 @@ class PrestamistaController extends Controller
 {
     public function index()
     {
-        $prestamistas = User::role(['PRESTAMISTA'])->get()->map(function ($usuario) {
-            // Solo prestamos no marcados como reportados
+        // Bloquear acceso a prestamistas
+        if (auth()->user()->hasRole('PRESTAMISTA')) {
+            abort(403, 'No estás autorizado para acceder a esta sección.');
+        }
+    
+        // Obtener información de prestamistas
+        $prestamistas = User::role('PRESTAMISTA')->get()->map(function ($usuario) {
             $prestamos = Prestamo::where('idusuario', $usuario->id)
                 ->whereNull('reportado')
                 ->get();
-
+    
             $totalPrestado = $prestamos->sum('monto_prestado');
-            $idsPrestamos = $prestamos->pluck('id')->toArray();
-
+            $idsPrestamos = $prestamos->pluck('id');
+    
             $totalCobrado = Pago::whereIn('prestamo_id', $idsPrestamos)
                 ->where('estado', 'Confirmado')
                 ->whereNull('reportado')
                 ->sum('monto_pagado');
-
+    
             $clientesAtendidos = $prestamos->unique('cliente_id')->count();
-
+    
             return [
                 'usuario' => $usuario,
                 'prestado' => $totalPrestado,
@@ -35,9 +40,10 @@ class PrestamistaController extends Controller
                 'clientes' => $clientesAtendidos,
             ];
         });
-
+    
         return view('admin.prestamistas.index', compact('prestamistas'));
     }
+    
 
     public function detalle($id)
     {

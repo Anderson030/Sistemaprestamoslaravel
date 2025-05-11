@@ -370,7 +370,7 @@ return [
         ],
 
         [
-            'text' => 'Notificaciones',
+            'text' => 'Ruta de cobrador',
             'icon' => 'fas fa-fw fa-envelope',
             'classes' => 'bg-blue text-white',
             'submenu' => [
@@ -393,6 +393,20 @@ return [
                 ],
             ],
         ],
+
+        [
+            'text' => 'Pago Parcial',
+            'icon' => 'fas fa-fw fa-pen-alt',
+            'classes' => 'bg-blue text-white',
+            'submenu' => [
+                [
+                    'text' => 'Listado de notas',
+                    'url' => 'admin/pagos_parciales',
+                    'classes' => 'bg-white text-black',
+                ],
+            ],
+        ],
+        
         
         [
             'text' => 'Backups',

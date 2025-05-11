@@ -9,15 +9,17 @@ class ClienteController extends Controller
 {
     public function index()
     {
-        $clientes = Cliente::all();
+        if (auth()->user()->hasRole('PRESTAMISTA')) {
+            // Solo clientes que pertenecen al prestamista
+            $clientes = auth()->user()->clientes;
+        } else {
+            // Admin, supervisor o dev ven todos los clientes
+            $clientes = Cliente::all();
+        }
+    
         return view('admin.clientes.index', compact('clientes'));
     }
-
-    public function create()
-    {
-        return view('admin.clientes.create');
-    }
-
+    
     public function store(Request $request)
     {
         $request->validate([
@@ -47,6 +49,8 @@ class ClienteController extends Controller
         $cliente->nombre_referencia2 = $request->nombre_referencia2;
         $cliente->telefono_referencia2 = $request->telefono_referencia2;
 
+        $cliente->idusuario = auth()->id();
+
         $cliente->save();
 
         return redirect()->route('admin.clientes.index')
@@ -57,14 +61,26 @@ class ClienteController extends Controller
     public function show($id)
     {
         $cliente = Cliente::find($id);
+    
+        if (auth()->user()->hasRole('PRESTAMISTA') && $cliente->idusuario !== auth()->id()) {
+            abort(403, 'No tienes permiso para ver este cliente.');
+        }
+    
         return view('admin.clientes.show', compact('cliente'));
     }
+    
 
     public function edit($id)
-    {
-        $cliente = Cliente::find($id);
-        return view('admin.clientes.edit', compact('cliente'));
+{
+    $cliente = Cliente::find($id);
+
+    if (auth()->user()->hasRole('PRESTAMISTA') && $cliente->idusuario !== auth()->id()) {
+        abort(403, 'No tienes permiso para editar este cliente.');
     }
+
+    return view('admin.clientes.edit', compact('cliente'));
+}
+
 
     public function update(Request $request, $id)
     {
@@ -109,4 +125,9 @@ class ClienteController extends Controller
             ->with('mensaje', 'Se eliminó al cliente de la manera correcta')
             ->with('icono', 'success');
     }
+    public function create()
+{
+    return view('admin.clientes.create');
+}
+
 }

@@ -17,9 +17,21 @@ class NotificacionController extends Controller
     public function index()
     {
         $configuracion = Configuracion::latest()->first();
-        $pagos = Pago::orderBy('fecha_pago','asc')->get();
-        return view('admin.notificaciones.index',compact('pagos','configuracion'));
+    
+        if (auth()->user()->hasRole('PRESTAMISTA')) {
+            // Obtener los préstamos del prestamista autenticado
+            $idsPrestamos = auth()->user()->prestamos->pluck('id');
+            $pagos = Pago::whereIn('prestamo_id', $idsPrestamos)
+                         ->orderBy('fecha_pago', 'asc')
+                         ->get();
+        } else {
+            // Los demás roles ven todos los pagos
+            $pagos = Pago::orderBy('fecha_pago', 'asc')->get();
+        }
+    
+        return view('admin.notificaciones.index', compact('pagos', 'configuracion'));
     }
+    
 
     /**
      * Show the form for creating a new resource.

@@ -31,4 +31,9 @@ class Cliente extends Model
     {
         return $this->hasMany(Prestamo::class);
     }
+    public function usuario()
+    {       
+    return $this->belongsTo(User::class, 'idusuario');
+    }
+
 }

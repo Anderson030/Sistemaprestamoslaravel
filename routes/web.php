@@ -1,5 +1,5 @@
 <?php
-
+use App\Http\Controllers\PagoParcialController;
 use Illuminate\Support\Facades\Route;
 
 /*
@@ -101,3 +101,10 @@ Route::get('/admin/backups/descargar/{nombreArchivo}', [App\Http\Controllers\Bac
 
 //ruta reset
 Route::post('/admin/prestamistas/reset', [App\Http\Controllers\PrestamistaController::class, 'reset'])->name('admin.prestamistas.reset');
+
+//ruta pago_parcial
+Route::middleware(['auth'])->prefix('admin')->name('admin.')->group(function () {
+Route::resource('pagos_parciales', PagoParcialController::class)->only(['index', 'create', 'store']);
+Route::resource('pagos_parciales', PagoParcialController::class)->only(['index', 'create', 'store', 'destroy']);
+
+});
