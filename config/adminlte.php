@@ -381,7 +381,19 @@ return [
                 ],
             ],
         ],
-
+        [
+            'text' => 'Prestamistas',
+            'icon' => 'fas fa-fw fa-user',
+            'classes' => 'bg-blue text-white',
+            'submenu' => [
+                [
+                    'text' => 'Listado de Prestamistas',
+                    'url' => 'admin/prestamistas',
+                    'classes' => 'bg-white text-black',
+                ],
+            ],
+        ],
+        
         [
             'text' => 'Backups',
             'icon' => 'fas fa-fw fa-database',

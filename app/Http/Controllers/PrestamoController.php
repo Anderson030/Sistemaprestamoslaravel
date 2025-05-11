@@ -75,6 +75,7 @@ class PrestamoController extends Controller
         $prestamo->nro_cuotas = $request->nro_cuotas;
         $prestamo->fecha_inicio = $request->fecha_inicio;
         $prestamo->monto_total = $request->monto_total;
+        $prestamo->idusuario = auth()->id();
         $prestamo->save();
 
         for($i = 1; $i <=$request->nro_cuotas ;$i++){
