@@ -90,9 +90,14 @@ Route::get('/admin/notificaciones', [App\Http\Controllers\NotificacionController
 Route::get('/admin/notificaciones/notificar/{id}', [App\Http\Controllers\NotificacionController::class, 'notificar'])->name('admin.notificaciones.notificar')->middleware('auth','can:admin.notificaciones.notificar');
 
 // rutas para prestamistas
-Route::get('/admin/prestamistas', [App\Http\Controllers\PrestamistaController::class, 'index'])->name('admin.prestamistas.index')->middleware('auth','can:admin.prestamistas.index');
-Route::get('/admin/prestamistas/{id}', [App\Http\Controllers\PrestamistaController::class, 'detalle'])->name('admin.prestamistas.detalle')->middleware('auth','can:admin.prestamistas.detalle');
+// rutas para prestamistas (solo middleware 'auth')
+Route::get('/admin/prestamistas', [App\Http\Controllers\PrestamistaController::class, 'index'])
+    ->name('admin.prestamistas.index')
+    ->middleware('auth');
 
+Route::get('/admin/prestamistas/{id}', [App\Http\Controllers\PrestamistaController::class, 'detalle'])
+    ->name('admin.prestamistas.detalle')
+    ->middleware('auth');
 
 //rutas para backups
 Route::get('/admin/backups', [App\Http\Controllers\BackupController::class, 'index'])->name('admin.backups.index')->middleware('auth','can:admin.backups.index');

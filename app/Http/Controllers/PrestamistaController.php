@@ -12,12 +12,8 @@ class PrestamistaController extends Controller
 {
     public function index()
     {
-        // Bloquear acceso a prestamistas
-        if (auth()->user()->hasRole('PRESTAMISTA')) {
-            abort(403, 'No estás autorizado para acceder a esta sección.');
-        }
-    
-        // Obtener información de prestamistas
+       
+ // Obtener información de prestamistas
         $prestamistas = User::role('PRESTAMISTA')->get()->map(function ($usuario) {
             $prestamos = Prestamo::where('idusuario', $usuario->id)
                 ->whereNull('reportado')
