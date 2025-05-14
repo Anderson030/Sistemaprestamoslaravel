@@ -6,123 +6,121 @@
 @stop
 
 @section('content')
-    <div class="row">
-        <div class="col-md-8">
+    <div class="row justify-content-center">
+        <div class="col-md-10">
             <div class="card card-outline card-primary">
                 <div class="card-header">
                     <h3 class="card-title">Prestamos registrados</h3>
-
                     <div class="card-tools">
                         <a href="{{url('/admin/prestamos/create')}}" class="btn btn-primary"> Crear nuevo</a>
                     </div>
-                    <!-- /.card-tools -->
                 </div>
-                <!-- /.card-header -->
-                <div class="card-body">
-                    <table id="example1" class="table table-bordered table-hover table-striped table-sm">
-                        <thead>
-                        <tr>
-                            <th style="text-align: center">Nro</th>
-                            <th style="text-align: center">Documento</th>
-                            <th style="text-align: center">Apellidos y nombres</th>
-                            <th style="text-align: center">Monto Prestado</th>
-                            <th style="text-align: center">Tasa de interes</th>
-                            <th style="text-align: center">Modalidad</th>
-                            <th style="text-align: center">Nro de cuotas</th>
-                            <th style="text-align: center">Fecha de inicio</th>
-                            <th style="text-align: center">Acción</th>
-                        </tr>
-                        </thead>
-                        <tbody>
-                        @php
-                            $contador = 1;
-                        @endphp
-                        @foreach($prestamos as $prestamo)
-                            <tr>
-                                <td style="text-align: center">{{$contador++}}</td>
-                                <td>{{$prestamo->cliente->nro_documento}}</td>
-                                <td>{{$prestamo->cliente->apellidos." ".$prestamo->cliente->nombres}}</td>
-                                <td>{{$prestamo->monto_prestado}}</td>
-                                <td>{{$prestamo->tasa_interes}}</td>
-                                <td>{{$prestamo->modalidad}}</td>
-                                <td>{{$prestamo->nro_cuotas}}</td>
-                                <td>{{$prestamo->fecha_inicio}}</td>
-                                <td style="text-align: center">
-                                    <div class="btn-group" role="group" aria-label="Basic example">
-                                        <a href="{{url('/admin/prestamos',$prestamo->id)}}" style="border-radius: 4px 0px 0px 4px" class="btn btn-info btn-sm"><i class="fas fa-eye"></i></a>
-                                        <a href="{{url('/admin/prestamos/contratos',$prestamo->id)}}" style="border-radius: 0px 0px 0px 0px" class="btn btn-warning btn-sm"><i class="fas fa-print"></i></a>
-                                        @if($prestamo->tiene_cuota_pagada)
-                                        @else
-                                            <a href="{{url('/admin/prestamos/'.$prestamo->id.'/edit')}}" style="border-radius: 0px 0px 0px 0px" class="btn btn-success btn-sm"><i class="fas fa-pencil-alt"></i></a>
-                                            <form action="{{url('/admin/prestamos',$prestamo->id)}}" method="post"
-                                                  onclick="preguntar{{$prestamo->id}}(event)" id="miFormulario{{$prestamo->id}}">
-                                                @csrf
-                                                @method('DELETE')
-                                                <button type="submit" class="btn btn-danger btn-sm" style="border-radius: 0px 4px 4px 0px"><i class="fas fa-trash"></i></button>
-                                            </form>
-                                        @endif
 
-                                        <script>
-                                            function preguntar{{$prestamo->id}}(event) {
-                                                event.preventDefault();
-                                                Swal.fire({
-                                                    title: '¿Desea eliminar esta registro?',
-                                                    text: '',
-                                                    icon: 'question',
-                                                    showDenyButton: true,
-                                                    confirmButtonText: 'Eliminar',
-                                                    confirmButtonColor: '#a5161d',
-                                                    denyButtonColor: '#270a0a',
-                                                    denyButtonText: 'Cancelar',
-                                                }).then((result) => {
-                                                    if (result.isConfirmed) {
-                                                        var form = $('#miFormulario{{$prestamo->id}}');
-                                                        form.submit();
-                                                    }
-                                                });
-                                            }
-                                        </script>
-                                    </div>
-                                </td>
+                <div class="card-body">
+                    <div class="table-responsive">
+                        <table id="example1" class="table table-bordered table-hover table-striped table-sm">
+                            <thead>
+                            <tr>
+                                <th style="text-align: center">Nro</th>
+                                <th style="text-align: center">Documento</th>
+                                <th style="text-align: center">Apellidos y nombres</th>
+                                <th style="text-align: center">Monto Prestado</th>
+                                <th style="text-align: center">Tasa de interes</th>
+                                <th style="text-align: center">Modalidad</th>
+                                <th style="text-align: center">Nro de cuotas</th>
+                                <th style="text-align: center">Fecha de inicio</th>
+                                <th style="text-align: center">Acción</th>
                             </tr>
-                        @endforeach
-                        </tbody>
-                    </table>
+                            </thead>
+                            <tbody>
+                            @php $contador = 1; @endphp
+                            @foreach($prestamos as $prestamo)
+                                <tr>
+                                    <td class="text-center">{{$contador++}}</td>
+                                    <td>{{$prestamo->cliente->nro_documento}}</td>
+                                    <td>{{$prestamo->cliente->apellidos." ".$prestamo->cliente->nombres}}</td>
+                                    <td>{{$prestamo->monto_prestado}}</td>
+                                    <td>{{$prestamo->tasa_interes}}</td>
+                                    <td>{{$prestamo->modalidad}}</td>
+                                    <td>{{$prestamo->nro_cuotas}}</td>
+                                    <td>{{$prestamo->fecha_inicio}}</td>
+                                    <td class="text-center">
+                                        <div class="btn-group" role="group">
+                                            <a href="{{url('/admin/prestamos',$prestamo->id)}}" class="btn btn-info btn-sm"><i class="fas fa-eye"></i></a>
+                                            <a href="{{url('/admin/prestamos/contratos',$prestamo->id)}}" class="btn btn-warning btn-sm"><i class="fas fa-print"></i></a>
+                                            @if(!$prestamo->tiene_cuota_pagada)
+                                                <a href="{{url('/admin/prestamos/'.$prestamo->id.'/edit')}}" class="btn btn-success btn-sm"><i class="fas fa-pencil-alt"></i></a>
+                                                <form action="{{url('/admin/prestamos',$prestamo->id)}}" method="post"
+                                                      onclick="preguntar{{$prestamo->id}}(event)" id="miFormulario{{$prestamo->id}}">
+                                                    @csrf
+                                                    @method('DELETE')
+                                                    <button type="submit" class="btn btn-danger btn-sm"><i class="fas fa-trash"></i></button>
+                                                </form>
+                                            @endif
+                                            <script>
+                                                function preguntar{{$prestamo->id}}(event) {
+                                                    event.preventDefault();
+                                                    Swal.fire({
+                                                        title: '¿Desea eliminar esta registro?',
+                                                        icon: 'question',
+                                                        showDenyButton: true,
+                                                        confirmButtonText: 'Eliminar',
+                                                        confirmButtonColor: '#a5161d',
+                                                        denyButtonColor: '#270a0a',
+                                                        denyButtonText: 'Cancelar',
+                                                    }).then((result) => {
+                                                        if (result.isConfirmed) {
+                                                            document.getElementById('miFormulario{{$prestamo->id}}').submit();
+                                                        }
+                                                    });
+                                                }
+                                            </script>
+                                        </div>
+                                    </td>
+                                </tr>
+                            @endforeach
+                            </tbody>
+                        </table>
+                    </div>
                 </div>
-                <!-- /.card-body -->
             </div>
-            <!-- /.card -->
         </div>
     </div>
 @stop
 
 @section('css')
     <style>
-        /* Fondo transparente y sin borde en el contenedor */
         #example1_wrapper .dt-buttons {
             background-color: transparent;
             box-shadow: none;
             border: none;
             display: flex;
-            justify-content: center; /* Centrar los botones */
-            gap: 10px; /* Espaciado entre botones */
-            margin-bottom: 15px; /* Separar botones de la tabla */
+            flex-wrap: nowrap;
+            overflow-x: auto;
+            justify-content: flex-start;
+            gap: 10px;
+            margin-bottom: 15px;
         }
 
-        /* Estilo personalizado para los botones */
         #example1_wrapper .btn {
-            color: #fff; /* Color del texto en blanco */
-            border-radius: 4px; /* Bordes redondeados */
-            padding: 5px 15px; /* Espaciado interno */
-            font-size: 14px; /* Tamaño de fuente */
+            color: #fff;
+            border-radius: 4px;
+            padding: 5px 15px;
+            font-size: 14px;
+            white-space: nowrap;
         }
 
-        /* Colores por tipo de botón */
         .btn-danger { background-color: #dc3545; border: none; }
         .btn-success { background-color: #28a745; border: none; }
         .btn-info { background-color: #17a2b8; border: none; }
         .btn-warning { background-color: #ffc107; color: #212529; border: none; }
         .btn-default { background-color: #6e7176; color: #212529; border: none; }
+
+        @media (max-width: 768px) {
+            td, th {
+                white-space: nowrap;
+            }
+        }
     </style>
 @stop
 

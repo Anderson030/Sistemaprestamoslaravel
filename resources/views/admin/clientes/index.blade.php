@@ -6,19 +6,18 @@
 @stop
 
 @section('content')
-    <div class="row">
-        <div class="col-md-8">
-            <div class="card card-outline card-primary">
-                <div class="card-header">
-                    <h3 class="card-title">Clientes registrados</h3>
-
-                    <div class="card-tools">
-                        <a href="{{url('/admin/clientes/create')}}" class="btn btn-primary"> Crear nuevo</a>
-                    </div>
-                    <!-- /.card-tools -->
+<div class="row justify-content-center">
+    <div class="col-md-10">
+        <div class="card card-outline card-primary">
+            <div class="card-header">
+                <h3 class="card-title">Clientes registrados</h3>
+                <div class="card-tools">
+                    <a href="{{url('/admin/clientes/create')}}" class="btn btn-primary"> Crear nuevo</a>
                 </div>
-                <!-- /.card-header -->
-                <div class="card-body">
+            </div>
+
+            <div class="card-body">
+                <div class="table-responsive">
                     <table id="example1" class="table table-bordered table-hover table-striped table-sm">
                         <thead>
                         <tr>
@@ -33,34 +32,30 @@
                         </tr>
                         </thead>
                         <tbody>
-                        @php
-                            $contador = 1;
-                        @endphp
+                        @php $contador = 1; @endphp
                         @foreach($clientes as $cliente)
                             <tr>
-                                <td style="text-align: center">{{$contador++}}</td>
-                                <td>{{$cliente->nro_documento}}</td>
-                                <td>{{$cliente->apellidos." ".$cliente->nombres}}</td>
+                                <td class="text-center">{{ $contador++ }}</td>
+                                <td>{{ $cliente->nro_documento }}</td>
+                                <td>{{ $cliente->apellidos . " " . $cliente->nombres }}</td>
                                 <td>{{ $cliente->categoria }}</td>
-                                <td>{{$cliente->email}}</td>
-                                <td>{{$cliente->celular}}</td>
-                                <td>{{$cliente->ref_celular}}</td>
-                                <td style="text-align: center">
-                                    <div class="btn-group" role="group" aria-label="Basic example">
-                                        <a href="{{url('/admin/clientes',$cliente->id)}}" style="border-radius: 4px 0px 0px 4px" class="btn btn-info btn-sm"><i class="fas fa-eye"></i></a>
-                                        <a href="{{url('/admin/clientes/'.$cliente->id.'/edit')}}" style="border-radius: 0px 0px 0px 0px" class="btn btn-success btn-sm"><i class="fas fa-pencil-alt"></i></a>
-                                        <form action="{{url('/admin/clientes',$cliente->id)}}" method="post"
-                                              onclick="preguntar{{$cliente->id}}(event)" id="miFormulario{{$cliente->id}}">
+                                <td>{{ $cliente->email }}</td>
+                                <td>{{ $cliente->celular }}</td>
+                                <td>{{ $cliente->ref_celular }}</td>
+                                <td class="text-center">
+                                    <div class="btn-group" role="group">
+                                        <a href="{{ url('/admin/clientes', $cliente->id) }}" class="btn btn-info btn-sm"><i class="fas fa-eye"></i></a>
+                                        <a href="{{ url('/admin/clientes/' . $cliente->id . '/edit') }}" class="btn btn-success btn-sm"><i class="fas fa-pencil-alt"></i></a>
+                                        <form action="{{ url('/admin/clientes', $cliente->id) }}" method="POST" id="miFormulario{{$cliente->id}}" onclick="preguntar{{$cliente->id}}(event)">
                                             @csrf
                                             @method('DELETE')
-                                            <button type="submit" class="btn btn-danger btn-sm" style="border-radius: 0px 4px 4px 0px"><i class="fas fa-trash"></i></button>
+                                            <button type="submit" class="btn btn-danger btn-sm"><i class="fas fa-trash"></i></button>
                                         </form>
                                         <script>
                                             function preguntar{{$cliente->id}}(event) {
                                                 event.preventDefault();
                                                 Swal.fire({
-                                                    title: '¿Desea eliminar esta registro?',
-                                                    text: '',
+                                                    title: '¿Desea eliminar este registro?',
                                                     icon: 'question',
                                                     showDenyButton: true,
                                                     confirmButtonText: 'Eliminar',
@@ -69,8 +64,7 @@
                                                     denyButtonText: 'Cancelar',
                                                 }).then((result) => {
                                                     if (result.isConfirmed) {
-                                                        var form = $('#miFormulario{{$cliente->id}}');
-                                                        form.submit();
+                                                        document.getElementById('miFormulario{{$cliente->id}}').submit();
                                                     }
                                                 });
                                             }
@@ -82,40 +76,46 @@
                         </tbody>
                     </table>
                 </div>
-                <!-- /.card-body -->
             </div>
-            <!-- /.card -->
         </div>
     </div>
+</div>
 @stop
 
 @section('css')
     <style>
-        /* Fondo transparente y sin borde en el contenedor */
+        /* Botones DataTables organizados y con scroll en móvil */
         #example1_wrapper .dt-buttons {
             background-color: transparent;
             box-shadow: none;
             border: none;
             display: flex;
-            justify-content: center; /* Centrar los botones */
-            gap: 10px; /* Espaciado entre botones */
-            margin-bottom: 15px; /* Separar botones de la tabla */
+            flex-wrap: nowrap;
+            overflow-x: auto;
+            justify-content: flex-start;
+            gap: 10px;
+            margin-bottom: 15px;
         }
 
-        /* Estilo personalizado para los botones */
         #example1_wrapper .btn {
-            color: #fff; /* Color del texto en blanco */
-            border-radius: 4px; /* Bordes redondeados */
-            padding: 5px 15px; /* Espaciado interno */
-            font-size: 14px; /* Tamaño de fuente */
+            color: #fff;
+            border-radius: 4px;
+            padding: 5px 15px;
+            font-size: 14px;
+            white-space: nowrap;
         }
 
-        /* Colores por tipo de botón */
         .btn-danger { background-color: #dc3545; border: none; }
         .btn-success { background-color: #28a745; border: none; }
         .btn-info { background-color: #17a2b8; border: none; }
         .btn-warning { background-color: #ffc107; color: #212529; border: none; }
         .btn-default { background-color: #6e7176; color: #212529; border: none; }
+
+        @media (max-width: 768px) {
+            td, th {
+                white-space: nowrap;
+            }
+        }
     </style>
 @stop
 

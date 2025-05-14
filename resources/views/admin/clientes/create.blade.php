@@ -180,7 +180,11 @@
                                 </div>
                             </div>
                         </div>
-
+                        <div class="col-md-6">
+                             <div class="col-md-6">
+                                <label for="comentario">Comentario</label>
+                                 <textarea name="comentario" class="form-control" placeholder="Observaciones o referencias...">{{ old('comentario') }}</textarea>
+                             </div>
                         <div class="row">
                             <div class="col-md-12">
                                 <div class="form-group">

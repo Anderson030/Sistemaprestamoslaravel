@@ -48,6 +48,8 @@ class ClienteController extends Controller
         $cliente->telefono_referencia1 = $request->telefono_referencia1;
         $cliente->nombre_referencia2 = $request->nombre_referencia2;
         $cliente->telefono_referencia2 = $request->telefono_referencia2;
+        $cliente->comentario = $request->comentario;
+
 
         $cliente->idusuario = auth()->id();
 
@@ -110,6 +112,8 @@ class ClienteController extends Controller
         $cliente->telefono_referencia1 = $request->telefono_referencia1;
         $cliente->nombre_referencia2 = $request->nombre_referencia2;
         $cliente->telefono_referencia2 = $request->telefono_referencia2;
+        $cliente->comentario = $request->comentario;
+
 
         $cliente->save();
 

@@ -164,6 +164,11 @@
         <input type="text" class="form-control" name="telefono_referencia2" value="{{ $cliente->telefono_referencia2 }}">
     </div>
 </div>
+<div class="form-group">
+    <label for="comentario">Comentario</label>
+    <textarea name="comentario" id="comentario" class="form-control" rows="3" placeholder="Escriba un comentario...">{{ $cliente->comentario }}</textarea>
+</div>
+
 
 
                         <hr>

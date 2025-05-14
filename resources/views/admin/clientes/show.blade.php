@@ -69,7 +69,7 @@
                                     <div class="input-group-prepend">
                                         <span class="input-group-text"><i class="fas fa-user-check"></i></span>
                                     </div>
-                                    <input type="text" value="{{ $cliente->genero }}" class="form-control" disabled>
+                                    <input type="text" value="{{ $cliente->categoria }}" class="form-control" disabled>
                                 </div>
                             </div>
                         </div>
@@ -150,6 +150,11 @@
                             </div>
                         </div>
                     </div>
+                    <div class="form-group">
+    <label><strong>Comentario</strong></label>
+    <textarea class="form-control" rows="3" disabled>{{ $cliente->comentario }}</textarea>
+</div>
+
 
                     <div class="row">
                         <div class="col-md-12">
