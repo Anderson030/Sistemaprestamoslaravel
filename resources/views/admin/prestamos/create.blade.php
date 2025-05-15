@@ -209,7 +209,7 @@
         const tasa = parseFloat($(this).val());
         if (tasa !== 20) {
             const clave = prompt('Has ingresado una tasa diferente al 20%. Ingresa la clave de autorización o contacta al administrador Victor o David:');
-            if (clave !== 'autorizado2025') {
+            if (clave !== 'Emiluna24') {
                 alert('Clave incorrecta. Solo se permite 20% de interés.');
                 $(this).val(20);
                 tasaAutorizada = 20;

@@ -14,7 +14,7 @@
                 </div>
 
                 <div class="card-body">
-                    <form action="{{url('admin/clientes/create')}}" method="post">
+                    <form action="{{ url('admin/clientes/create') }}" method="post" enctype="multipart/form-data">
                         @csrf
                         <div class="row">
                             <div class="col-md-3">
@@ -184,6 +184,11 @@
                              <div class="col-md-6">
                                 <label for="comentario">Comentario</label>
                                  <textarea name="comentario" class="form-control" placeholder="Observaciones o referencias...">{{ old('comentario') }}</textarea>
+                                 <div class="form-group mt-3">
+                                    <label for="foto">Foto del cliente (opcional)</label>
+                                    <input type="file" name="foto" class="form-control" accept="image/*">
+                                    <small class="text-muted">Solo imágenes. Ideal menos de 1MB.</small>
+                                </div>
                              </div>
                         <div class="row">
                             <div class="col-md-12">

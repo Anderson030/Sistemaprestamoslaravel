@@ -151,11 +151,15 @@
                         </div>
                     </div>
                     <div class="form-group">
-    <label><strong>Comentario</strong></label>
-    <textarea class="form-control" rows="3" disabled>{{ $cliente->comentario }}</textarea>
-</div>
-
-
+                    <label><strong>Comentario</strong></label>
+                    <textarea class="form-control" rows="3" disabled>{{ $cliente->comentario }}</textarea>
+                </div>
+                @if($cliente->foto)
+                    <div class="form-group">
+                        <label>Foto del cliente:</label><br>
+                        <img src="{{ asset('fotos_clientes/' . $cliente->foto) }}" alt="Foto del cliente" style="width: 150px; height: auto; border-radius: 5px;">
+                    </div>
+                @endif
                     <div class="row">
                         <div class="col-md-12">
                             <div class="form-group">

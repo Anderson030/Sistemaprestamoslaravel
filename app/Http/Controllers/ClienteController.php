@@ -20,45 +20,52 @@ class ClienteController extends Controller
         return view('admin.clientes.index', compact('clientes'));
     }
     
-    public function store(Request $request)
-    {
-        $request->validate([
-            'nro_documento' => 'required|unique:clientes',
-            'nombres' => 'required',
-            'apellidos' => 'required',
-            'fecha_nacimiento' => 'required',
-            'email' => 'required',
-            'celular' => 'required',
-            'ref_celular' => 'required',
-            'direccion' => 'required',
-        ]);
+ public function store(Request $request)
+{
+    $request->validate([
+        'nro_documento' => 'required|unique:clientes',
+        'nombres' => 'required',
+        'apellidos' => 'required',
+        'fecha_nacimiento' => 'required',
+        'email' => 'required',
+        'celular' => 'required',
+        'ref_celular' => 'required',
+        'direccion' => 'required',
+    ]);
 
-        $cliente = new Cliente();
-        $cliente->nro_documento = $request->nro_documento;
-        $cliente->nombres = $request->nombres;
-        $cliente->apellidos = $request->apellidos;
-        $cliente->fecha_nacimiento = $request->fecha_nacimiento;
-        $cliente->categoria = $request->categoria;
-        $cliente->email = $request->email;
-        $cliente->celular = $request->celular;
-        $cliente->ref_celular = $request->ref_celular;
-        $cliente->direccion = $request->direccion;
+    $cliente = new Cliente();
+    $cliente->nro_documento = $request->nro_documento;
+    $cliente->nombres = $request->nombres;
+    $cliente->apellidos = $request->apellidos;
+    $cliente->fecha_nacimiento = $request->fecha_nacimiento;
+    $cliente->categoria = $request->categoria;
+    $cliente->email = $request->email;
+    $cliente->celular = $request->celular;
+    $cliente->ref_celular = $request->ref_celular;
+    $cliente->direccion = $request->direccion;
 
-        $cliente->nombre_referencia1 = $request->nombre_referencia1;
-        $cliente->telefono_referencia1 = $request->telefono_referencia1;
-        $cliente->nombre_referencia2 = $request->nombre_referencia2;
-        $cliente->telefono_referencia2 = $request->telefono_referencia2;
-        $cliente->comentario = $request->comentario;
+    $cliente->nombre_referencia1 = $request->nombre_referencia1;
+    $cliente->telefono_referencia1 = $request->telefono_referencia1;
+    $cliente->nombre_referencia2 = $request->nombre_referencia2;
+    $cliente->telefono_referencia2 = $request->telefono_referencia2;
+    $cliente->comentario = $request->comentario;
 
-
-        $cliente->idusuario = auth()->id();
-
-        $cliente->save();
-
-        return redirect()->route('admin.clientes.index')
-            ->with('mensaje', 'Se registró al cliente de la manera correcta')
-            ->with('icono', 'success');
+    if ($request->hasFile('foto')) {
+        $foto = $request->file('foto');
+        $nombreFoto = time() . '_' . $foto->getClientOriginalName();
+        $foto->move(public_path('fotos_clientes'), $nombreFoto);
+        $cliente->foto = $nombreFoto;
     }
+
+    $cliente->idusuario = auth()->id(); // Esto puede ir antes o después del if
+
+    $cliente->save();
+
+    return redirect()->route('admin.clientes.index')
+        ->with('mensaje', 'Se registró al cliente de la manera correcta')
+        ->with('icono', 'success');
+}
+
 
     public function show($id)
     {
