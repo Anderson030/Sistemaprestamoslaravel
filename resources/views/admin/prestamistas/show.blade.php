@@ -56,6 +56,7 @@
                         <th>Monto Pagado</th>
                         <th>Método</th>
                         <th>Fecha de Pago</th>
+                        <th>Fecha cancelado</th>
                         <th>Estado</th>
                     </tr>
                 </thead>
@@ -64,12 +65,16 @@
                     @foreach($pagos as $pago)
                         @php $totalPagado += $pago->monto_pagado; @endphp
                         <tr>
-                            <td>{{ $pago->prestamo->cliente->apellidos ?? '' }} {{ $pago->prestamo->cliente->nombres ?? '' }}</td>
-                            <td>${{ number_format($pago->monto_pagado, 0, ',', '.') }}</td>
-                            <td>{{ $pago->metodo_pago }}</td>
-                            <td>{{ $pago->fecha_pago }}</td>
-                            <td>{{ $pago->estado }}</td>
-                        </tr>
+                        <td>{{ $pago->prestamo->cliente->apellidos ?? '' }} {{ $pago->prestamo->cliente->nombres ?? '' }}</td>
+                        <td>${{ number_format($pago->monto_pagado, 0, ',', '.') }}</td>
+                        <td>{{ $pago->metodo_pago }}</td>
+                        <td>{{ $pago->fecha_pago }}</td>
+                        <td>
+                            {{ $pago->fecha_cancelado ? \Carbon\Carbon::parse($pago->fecha_cancelado)->format('Y-m-d') : '' }}
+                        </td>
+                        <td>{{ $pago->estado }}</td>
+                    </tr>
+
                     @endforeach
                     <tr>
                         <td><b>Total recibido</b></td>

@@ -225,29 +225,38 @@
     });
 
     function calcularPrestamo() {
-        let montoRaw = $('#monto_prestado').val();
-        if (!montoRaw) {
-            return; // Evita mostrar alerta prematura
-        }
-        montoRaw = montoRaw.toString().replace(/[^\d]/g, ''); // Quita $ . , espacios
-        const montoPrestado = parseFloat(montoRaw);
-        const nroCuotas = parseInt($('#nro_cuotas').val());
+    let montoRaw = $('#monto_prestado').val();
+    if (!montoRaw) return;
 
-        if (isNaN(montoPrestado) || isNaN(nroCuotas) || montoPrestado <= 0 || nroCuotas <= 0) {
-            return; // Evita alertas mientras el usuario escribe
-        }
+    montoRaw = montoRaw.toString().replace(/[^\d]/g, '');
+    const montoPrestado = parseFloat(montoRaw);
+    const nroCuotas = parseInt($('#nro_cuotas').val());
+    const modalidad = $('#modalidad').val();
 
-        const interes = montoPrestado * (tasaAutorizada / 100);
-        const totalCancelar = montoPrestado + interes;
-        const cuota = totalCancelar / nroCuotas;
+    if (isNaN(montoPrestado) || isNaN(nroCuotas) || montoPrestado <= 0 || nroCuotas <= 0) return;
 
-        $('#monto_cuota').val('$ ' + cuota.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, '.'));
-        $('#monto_interes').val('$ ' + interes.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, '.'));
-        $('#monto_final').val('$ ' + totalCancelar.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, '.'));
+    // Cuotas por mes según modalidad
+    let cuotasPorMes = 30; // Default: Diario
+    if (modalidad === 'Semanal') cuotasPorMes = 4;
+    else if (modalidad === 'Quincenal') cuotasPorMes = 2;
 
-        $('#monto_cuota2').val(cuota.toFixed(2));
-        $('#monto_final2').val(totalCancelar.toFixed(2));
-    }
+    // Calcular número total de meses (redondeado hacia arriba)
+    const meses = Math.ceil(nroCuotas / cuotasPorMes);
+
+    // Interés total según meses * tasa base (20% por mes)
+    const tasaTotal = tasaAutorizada * meses;
+
+    const interes = (montoPrestado * tasaTotal) / 100;
+    const totalCancelar = montoPrestado + interes;
+    const cuota = totalCancelar / nroCuotas;
+
+    $('#monto_cuota').val('$ ' + cuota.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, '.'));
+    $('#monto_interes').val('$ ' + interes.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, '.'));
+    $('#monto_final').val('$ ' + totalCancelar.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, '.'));
+
+    $('#monto_cuota2').val(cuota.toFixed(2));
+    $('#monto_final2').val(totalCancelar.toFixed(2));
+}
 
     // Recalcular si se cambian los valores
     $('#monto_prestado').on('change', function () {
