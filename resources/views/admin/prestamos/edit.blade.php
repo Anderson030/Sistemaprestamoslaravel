@@ -164,33 +164,45 @@
 
     function calcularPrestamo() {
         const monto = parseFloat($('#monto_prestado').val());
-        const tasa = parseFloat($('#tasa_interes').val()) / 100;
+        const tasaBase = parseFloat($('#tasa_interes').val()) / 100;
         const cuotas = parseInt($('#nro_cuotas').val());
         const modalidad = $('#modalidad').val();
 
-        if (!monto || !tasa || !cuotas) return;
+        if (!monto || !tasaBase || !cuotas) return;
 
-        let factor = 1;
-        switch(modalidad) {
-            case 'Diario': factor = 30; break;
-            case 'Semanal': factor = 4; break;
-            case 'Quincenal': factor = 2; break;
-            case 'Mensual': factor = 1; break;
-            case 'Anual': factor = 1 / 12; break;
+        let baseCuotas = 0;
+
+        switch (modalidad) {
+            case 'Diario': baseCuotas = 30; break;
+            case 'Semanal': baseCuotas = 4; break;
+            case 'Quincenal': baseCuotas = 2; break;
+            case 'Mensual': baseCuotas = 1; break;
+            case 'Anual': baseCuotas = 1; break;
+            default: baseCuotas = 1;
         }
 
-        const meses = Math.ceil(cuotas / factor);
-        const interes = monto * tasa * meses;
-        const total = monto + interes;
+        let totalInteres = 0;
+
+        if (cuotas <= baseCuotas) {
+            totalInteres = monto * tasaBase;
+        } else {
+            const adicionales = cuotas - baseCuotas;
+            const interesBase = monto * tasaBase;
+            const interesAdicional = monto * (tasaBase / baseCuotas) * adicionales;
+            totalInteres = interesBase + interesAdicional;
+        }
+
+        const total = monto + totalInteres;
         const cuota = total / cuotas;
 
-        $('#monto_cuota').val(cuota.toFixed(2));
+        $('#monto_cuota').val('$ ' + cuota.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, '.'));
         $('#monto_cuota2').val(cuota.toFixed(2));
-        $('#monto_interes').val(interes.toFixed(2));
-        $('#monto_final').val(total.toFixed(2));
+        $('#monto_interes').val('$ ' + totalInteres.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, '.'));
+        $('#monto_final').val('$ ' + total.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, '.'));
         $('#monto_final2').val(total.toFixed(2));
     }
 
     window.onload = calcularPrestamo;
+    $('#monto_prestado, #tasa_interes, #modalidad, #nro_cuotas').on('change keyup', calcularPrestamo);
 </script>
 @stop

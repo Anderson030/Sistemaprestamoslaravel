@@ -69,7 +69,7 @@
                             <div class="col-md-2">
                                 <label>Monto del préstamo</label>
                                 <select id="monto_prestado" name="monto_prestado" class="form-control select2_montos" required>
-                                    <option value="">Selecciona o escribe un monto...</option>
+                                    <option value="">Cantidad</option>
                                     @for ($i = 100000; $i <= 1000000; $i += 100000)
                                         <option value="{{ $i }}">{{ number_format($i, 0, ',', '.') }}</option>
                                     @endfor
@@ -223,8 +223,7 @@
 
         calcularPrestamo();
     });
-
-    function calcularPrestamo() {
+function calcularPrestamo() {
     let montoRaw = $('#monto_prestado').val();
     if (!montoRaw) return;
 
@@ -235,28 +234,45 @@
 
     if (isNaN(montoPrestado) || isNaN(nroCuotas) || montoPrestado <= 0 || nroCuotas <= 0) return;
 
-    // Cuotas por mes según modalidad
-    let cuotasPorMes = 30; // Default: Diario
-    if (modalidad === 'Semanal') cuotasPorMes = 4;
-    else if (modalidad === 'Quincenal') cuotasPorMes = 2;
+    let baseCuotas = 0;
+    let interesBase = 0;
+    let interesExtraPorCuota = 0;
 
-    // Calcular número total de meses (redondeado hacia arriba)
-    const meses = Math.ceil(nroCuotas / cuotasPorMes);
+    switch (modalidad) {
+        case 'Diario':
+            baseCuotas = 30;
+            break;
+        case 'Semanal':
+            baseCuotas = 4;
+            break;
+        case 'Quincenal':
+            baseCuotas = 2;
+            break;
+        default:
+            baseCuotas = 0;
+            break;
+    }
 
-    // Interés total según meses * tasa base (20% por mes)
-    const tasaTotal = tasaAutorizada * meses;
+    interesBase = montoPrestado * (tasaAutorizada / 100);
+    interesExtraPorCuota = montoPrestado * (tasaAutorizada / 100) / baseCuotas;
 
-    const interes = (montoPrestado * tasaTotal) / 100;
-    const totalCancelar = montoPrestado + interes;
+    const cuotasExtras = Math.max(0, nroCuotas - baseCuotas);
+    const interesExtra = interesExtraPorCuota * cuotasExtras;
+    const interesTotal = interesBase + interesExtra;
+    const totalCancelar = montoPrestado + interesTotal;
     const cuota = totalCancelar / nroCuotas;
 
     $('#monto_cuota').val('$ ' + cuota.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, '.'));
-    $('#monto_interes').val('$ ' + interes.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, '.'));
+    $('#monto_interes').val('$ ' + interesTotal.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, '.'));
     $('#monto_final').val('$ ' + totalCancelar.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, '.'));
 
     $('#monto_cuota2').val(cuota.toFixed(2));
     $('#monto_final2').val(totalCancelar.toFixed(2));
 }
+
+
+
+
 
     // Recalcular si se cambian los valores
     $('#monto_prestado').on('change', function () {
