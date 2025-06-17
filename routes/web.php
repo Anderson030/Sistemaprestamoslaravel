@@ -59,9 +59,9 @@ Route::middleware(['auth'])->prefix('admin')->name('admin.')->group(function () 
 
     // Pagos parciales
     Route::resource('pagos_parciales', PagoParcialController::class)->only(['index', 'create', 'store', 'destroy']);
+// Capital Empresa (control de acceso interno en el controlador)
+Route::get('capital', [App\Http\Controllers\CapitalEmpresaController::class, 'index'])->name('capital.index');
+Route::post('capital', [App\Http\Controllers\CapitalEmpresaController::class, 'store'])->name('capital.store');
+Route::post('capital/asignar', [App\Http\Controllers\CapitalEmpresaController::class, 'asignarCapital'])->name('capital.asignar');
 
-    // Capital Empresa
-    Route::get('capital', [App\Http\Controllers\CapitalEmpresaController::class, 'index'])->name('capital.index')->middleware('can:admin.capital.index');
-    Route::post('capital', [App\Http\Controllers\CapitalEmpresaController::class, 'store'])->name('capital.store')->middleware('can:admin.capital.store');
-    Route::post('capital/asignar', [App\Http\Controllers\CapitalEmpresaController::class, 'asignarCapital'])->name('capital.asignar')->middleware('can:admin.capital.store');
 });

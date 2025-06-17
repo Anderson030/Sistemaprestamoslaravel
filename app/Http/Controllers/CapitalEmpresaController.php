@@ -7,29 +7,36 @@ use App\Models\EmpresaCapital;
 use App\Models\CapitalPrestamista;
 use App\Models\User;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
 
 class CapitalEmpresaController extends Controller
 {
     /**
      * Mostrar el capital disponible y el formulario de asignación.
      */
-   
+    public function index()
+    {
+        if (Auth::user()->hasRole('PRESTAMISTA')) {
+            abort(403, 'No tienes autorización para acceder a esta sección.');
+        }
 
-public function index()
-{
-    $capital = EmpresaCapital::latest()->first();
+        $capital = EmpresaCapital::latest()->first();
 
-    // Solo traer usuarios con roles válidos
-    $usuarios = User::role(['ADMINISTRADOR', 'SUPERVISOR', 'PRESTAMISTA'])->get();
+        // Solo traer usuarios con roles válidos
+        $usuarios = User::role(['ADMINISTRADOR', 'SUPERVISOR', 'PRESTAMISTA'])->get();
 
-    return view('admin.capital.index', compact('capital', 'usuarios'));
-}
+        return view('admin.capital.index', compact('capital', 'usuarios'));
+    }
 
     /**
      * Guardar nuevo capital general.
      */
     public function store(Request $request)
     {
+        if (Auth::user()->hasRole('PRESTAMISTA')) {
+            abort(403, 'No tienes autorización para realizar esta acción.');
+        }
+
         $request->validate([
             'capital_total' => 'required|numeric|min:0'
         ]);
@@ -47,6 +54,10 @@ public function index()
      */
     public function asignarCapital(Request $request)
     {
+        if (Auth::user()->hasRole('PRESTAMISTA')) {
+            abort(403, 'No tienes autorización para realizar esta acción.');
+        }
+
         $userId = $request->input('asignar_id');
         $monto = floatval($request->input("montos.$userId"));
 
