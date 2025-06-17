@@ -368,6 +368,19 @@ return [
                 ],
             ],
         ],
+        [
+            'text' => 'Capital Empresa',
+            'icon' => 'fas fa-fw fa-building',
+            'classes' => 'bg-blue text-white',
+            'submenu' => [
+                [
+                    'text' => 'Registro de capital',
+                    'url' => 'admin/capital',
+                    'classes' => 'bg-white text-black',
+                ],
+            ],
+        ],
+
 
         [
             'text' => 'Ruta de cobrador',

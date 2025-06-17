@@ -1,7 +1,7 @@
 @extends('adminlte::page')
 
 @section('content_header')
-    <h1><b>____ NEXUS INVERSIONES ____</b></h1>
+    <h1><b>NEXUS INVERSIONES</b></h1>
     <hr>
 @stop
 

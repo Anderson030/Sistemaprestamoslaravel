@@ -15,7 +15,7 @@
                 </div>
                 <!-- /.card-header -->
                 <div class="card-body">
-                    <form action="{{url('admin/usuarios/create')}}" method="post">
+                    <form action="{{ route('admin.usuarios.store') }}" method="POST">
                         @csrf
                         <div class="row">
                             <div class="col-md-12">

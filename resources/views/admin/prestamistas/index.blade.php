@@ -24,41 +24,60 @@
                 <table id="example1" class="table table-bordered table-hover table-striped table-sm">
                     <thead>
                         <tr>
-                            <th style="text-align: center">N°</th>
                             <th>Nombre</th>
+                            <th>Capital Asignado</th>
                             <th>Total Prestado</th>
                             <th>Total Cobrado</th>
+                            <th>Total Recaudado</th>
+                            <th>Ganancia Total</th>
+                            <th>Ganancia Cobrada</th>
                             <th>Clientes Atendidos</th>
-                            <th style="text-align: center">Acción</th>
+                            <th>Acciones</th>
                         </tr>
                     </thead>
                     <tbody>
-                        @php $contador = 1; @endphp
-                        @foreach($prestamistas as $item)
+                        @foreach ($prestamistas as $prestamista)
                             <tr>
-                                <td style="text-align: center">{{ $contador++ }}</td>
-                                <td>{{ $item['usuario']->name }}</td>
-                                <td>${{ number_format($item['prestado'], 0, ',', '.') }}</td>
-                                <td>${{ number_format($item['cobrado'], 0, ',', '.') }}</td>
-                                <td>{{ $item['clientes'] }}</td>
-                                <td class="text-center">
-                                    <a href="{{ route('admin.prestamistas.detalle', $item['usuario']->id) }}" class="btn btn-info btn-sm">
-                                        <i class="fas fa-eye"></i>
+                                <td>{{ $prestamista['usuario']->name }}</td>
+                                    <td>
+                                    ${{ number_format($prestamista['capital_asignado'], 0, ',', '.') }}
+                                    @if($prestamista['capital_asignado'] > 0)
+                                        <form action="{{ route('admin.prestamistas.eliminarCapital', $prestamista['usuario']->id) }}" method="POST" style="display:inline;">
+                                            @csrf
+                                            @method('PATCH')
+                                            <button type="submit" class="btn btn-sm btn-danger" title="Eliminar capital asignado"
+                                                onclick="return confirm('¿Estás seguro de eliminar el capital asignado de este prestamista?')">
+                                                <i class="fas fa-trash"></i>
+                                            </button>
+                                        </form>
+                                    @endif
+                                </td>
+
+                                <td>${{ number_format($prestamista['prestado'], 0, ',', '.') }}</td>
+                                <td>${{ number_format($prestamista['cobrado'], 0, ',', '.') }}</td>
+                                <td>${{ number_format($prestamista['recaudado'], 0, ',', '.') }}</td>
+                                <td>${{ number_format($prestamista['ganancia'], 0, ',', '.') }}</td>
+                                <td>${{ number_format($prestamista['ganancia_real'], 0, ',', '.') }}</td>
+                                <td>{{ $prestamista['clientes'] }}</td>
+                                <td>
+                                    <a href="{{ route('admin.prestamistas.detalle', $prestamista['usuario']->id) }}" class="btn btn-sm btn-primary">
+                                        Ver detalle
                                     </a>
                                 </td>
                             </tr>
                         @endforeach
                     </tbody>
                     <tfoot>
-                        @php
-                            $totalPrestadoGeneral = $prestamistas->sum('prestado');
-                            $totalCobradoGeneral = $prestamistas->sum('cobrado');
-                        @endphp
                         <tr class="bg-light">
-                            <td colspan="2"><strong>TOTALES GENERALES</strong></td>
-                            <td><strong>${{ number_format($totalPrestadoGeneral, 0, ',', '.') }}</strong></td>
-                            <td><strong>${{ number_format($totalCobradoGeneral, 0, ',', '.') }}</strong></td>
-                            <td colspan="2"></td>
+                            <th><strong>TOTALES GENERALES</strong></th>
+                            <th><strong>${{ number_format($totalCapitalAsignado, 0, ',', '.') }}</strong></th>
+                            <th><strong>${{ number_format($totalPrestado, 0, ',', '.') }}</strong></th>
+                            <th><strong>${{ number_format($totalCobrado, 0, ',', '.') }}</strong></th>
+                            <th><strong>${{ number_format($totalRecaudado, 0, ',', '.') }}</strong></th>
+                            <th><strong>${{ number_format($totalGanancia, 0, ',', '.') }}</strong></th>
+                            <th><strong>${{ number_format($totalGananciaCobrada, 0, ',', '.') }}</strong></th>
+                            <th><strong>{{ $totalClientes }}</strong></th>
+                            <th></th>
                         </tr>
                     </tfoot>
                 </table>
@@ -106,7 +125,6 @@
 @stop
 
 @section('js')
-    {{-- Librerías para los botones de exportación --}}
     <script src="https://cdn.datatables.net/buttons/2.4.1/js/dataTables.buttons.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdfmake/0.2.7/pdfmake.min.js"></script>
@@ -148,17 +166,16 @@
             }).buttons().container().appendTo('#example1_wrapper .row:eq(0)');
         });
     </script>
+
     <script>
-    document.getElementById('form-reiniciar-totales').addEventListener('submit', function (e) {
-        e.preventDefault(); // Detiene el envío
-
-        const clave = prompt('Ingresa la clave para reiniciar los totales:');
-        if (clave === 'Emiluna24') {
-            this.submit(); // Continúa si la clave es correcta
-        } else {
-            alert('❌ Clave incorrecta. No se reiniciaron los totales.');
-        }
-    });
-</script>
-
+        document.getElementById('form-reiniciar-totales').addEventListener('submit', function (e) {
+            e.preventDefault();
+            const clave = prompt('Ingresa la clave para reiniciar los totales:');
+            if (clave === 'Emiluna24') {
+                this.submit();
+            } else {
+                alert('❌ Clave incorrecta. No se reiniciaron los totales.');
+            }
+        });
+    </script>
 @stop
