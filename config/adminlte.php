@@ -381,6 +381,19 @@ return [
             ],
         ],
 
+        [
+        'text' => 'Auditorías',
+        'icon' => 'fas fa-fw fa-clipboard-list', // icono tipo reporte
+        'classes' => 'bg-blue text-white',
+        'submenu' => [
+            [
+                'text' => 'Reporte diario',
+                'url' => 'admin/auditorias',
+                'classes' => 'bg-white text-black',
+            ],
+        ],
+    ],
+
 
         [
             'text' => 'Ruta de cobrador',

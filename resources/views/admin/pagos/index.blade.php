@@ -20,7 +20,7 @@
                                 <th style="text-align: center">Nro</th>
                                 <th style="text-align: center">Documento</th>
                                 <th style="text-align: center">Cliente</th>
-                                <th style="text-align: center">Couta Pagada</th>
+                                <th style="text-align: center">Cuota Pagada</th>
                                 <th style="text-align: center">Nro de cuotas</th>
                                 <th style="text-align: center">Fecha cancelado</th>
                                 <th style="text-align: center">Acción</th>
@@ -34,7 +34,8 @@
                                         <td style="text-align: center">{{$contador++}}</td>
                                         <td style="text-align: center">{{$pago->prestamo->cliente->nro_documento}}</td>
                                         <td>{{$pago->prestamo->cliente->apellidos." ".$pago->prestamo->cliente->nombres}}</td>
-                                        <td style="text-align: center">{{$pago->monto_pagado}}</td>
+                                        {{-- Formato pesos colombianos --}}
+                                        <td style="text-align: center">$ {{ number_format($pago->monto_pagado, 0, ',', '.') }}</td>
                                         <td style="text-align: center">{{$pago->referencia_pago}}</td>
                                         <td style="text-align: center">{{$pago->fecha_cancelado}}</td>
                                         <td style="text-align: center">

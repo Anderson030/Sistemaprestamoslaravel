@@ -14,5 +14,6 @@ class EmpresaCapital extends Model
     protected $fillable = [
         'capital_total',
         'capital_disponible',
+        'capital_anterior', // ✅ Agregado
     ];
 }

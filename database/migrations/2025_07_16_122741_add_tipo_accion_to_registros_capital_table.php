@@ -8,15 +8,15 @@ return new class extends Migration
 {
     public function up(): void
     {
-        Schema::table('clientes', function (Blueprint $table) {
-           // $table->dropColumn('genero');
+        Schema::table('registros_capital', function (Blueprint $table) {
+            $table->string('tipo_accion')->nullable()->after('monto');
         });
     }
 
     public function down(): void
     {
-        Schema::table('clientes', function (Blueprint $table) {
-            $table->string('genero'); // Si haces rollback
+        Schema::table('registros_capital', function (Blueprint $table) {
+            $table->dropColumn('tipo_accion');
         });
     }
 };

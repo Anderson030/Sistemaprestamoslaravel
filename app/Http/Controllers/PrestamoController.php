@@ -15,17 +15,6 @@ use Barryvdh\DomPDF\Facade\Pdf;
 
 class PrestamoController extends Controller
 {
-    public function create()
-    {
-        if (auth()->user()->hasRole('PRESTAMISTA')) {
-            $clientes = Cliente::where('idusuario', auth()->id())->get();
-        } else {
-            $clientes = Cliente::all();
-        }
-
-        return view('admin.prestamos.create', compact('clientes'));
-    }
-
     public function index()
     {
         if (auth()->user()->hasRole('PRESTAMISTA')) {
@@ -41,6 +30,17 @@ class PrestamoController extends Controller
         }
 
         return view('admin.prestamos.index', compact('prestamos'));
+    }
+
+    public function create()
+    {
+        if (auth()->user()->hasRole('PRESTAMISTA')) {
+            $clientes = Cliente::where('idusuario', auth()->id())->get();
+        } else {
+            $clientes = Cliente::all();
+        }
+
+        return view('admin.prestamos.create', compact('clientes'));
     }
 
     public function store(Request $request)
@@ -94,13 +94,12 @@ class PrestamoController extends Controller
             $capitalPrestamista = CapitalPrestamista::firstOrCreate(['user_id' => $usuario->id]);
 
             if ($capitalPrestamista->monto_disponible < $request->monto_prestado) {
-                return redirect()->back()
-                    ->with('mensaje', 'No tienes suficiente capital disponible para prestar este monto.')
-                    ->with('icono', 'error');
+                session()->flash('mensaje', '⚠️ No tienes suficiente capital disponible, pero el préstamo fue registrado correctamente.');
+                session()->flash('icono', 'warning');
             }
 
             $capitalPrestamista->monto_disponible -= $request->monto_prestado;
-             $capitalPrestamista->monto_asignado -= $request->monto_prestado;
+            $capitalPrestamista->monto_asignado -= $request->monto_prestado;
             $capitalPrestamista->save();
 
             MovimientoCapitalPrestamista::create([
@@ -115,15 +114,64 @@ class PrestamoController extends Controller
             ->with('icono', 'success');
     }
 
-    public function obtenerCliente($id)
+    public function edit($id)
     {
-        $cliente = Cliente::find($id);
+        $prestamo = Prestamo::findOrFail($id);
 
-        if (!$cliente) {
-            return response()->json(['error' => 'Cliente no encontrado'], 404);
+        if (auth()->user()->hasRole('PRESTAMISTA') && $prestamo->idusuario !== auth()->id()) {
+            return redirect()->route('admin.prestamos.index')
+                ->with('mensaje', 'No tienes permiso para editar este préstamo.')
+                ->with('icono', 'error');
         }
 
-        return response()->json($cliente);
+        $clientes = auth()->user()->hasRole('PRESTAMISTA')
+            ? Cliente::where('idusuario', auth()->id())->get()
+            : Cliente::all();
+
+        return view('admin.prestamos.edit', compact('prestamo', 'clientes'));
+    }
+
+    public function update(Request $request, $id)
+    {
+        $request->validate([
+            'cliente_id' => 'required',
+            'monto_prestado' => 'required',
+            'tasa_interes' => 'required',
+            'modalidad' => 'required',
+            'nro_cuotas' => 'required',
+            'fecha_inicio' => 'required',
+            'monto_total' => 'required',
+        ]);
+
+        $prestamo = Prestamo::findOrFail($id);
+
+        if (auth()->user()->hasRole('PRESTAMISTA') && $prestamo->idusuario !== auth()->id()) {
+            return redirect()->route('admin.prestamos.index')
+                ->with('mensaje', 'No tienes permiso para actualizar este préstamo.')
+                ->with('icono', 'error');
+        }
+
+        $prestamo->update([
+            'cliente_id' => $request->cliente_id,
+            'monto_prestado' => $request->monto_prestado,
+            'tasa_interes' => $request->tasa_interes,
+            'modalidad' => $request->modalidad,
+            'nro_cuotas' => $request->nro_cuotas,
+            'fecha_inicio' => $request->fecha_inicio,
+            'monto_total' => $request->monto_total,
+        ]);
+
+        return redirect()->route('admin.prestamos.index')
+            ->with('mensaje', 'Préstamo actualizado correctamente.')
+            ->with('icono', 'success');
+    }
+
+    public function show($id)
+    {
+        $prestamo = Prestamo::with('cliente')->findOrFail($id);
+        $pagos = Pago::where('prestamo_id', $prestamo->id)->get();
+
+        return view('admin.prestamos.show', compact('prestamo', 'pagos'));
     }
 
     public function destroy($id)
@@ -144,21 +192,24 @@ class PrestamoController extends Controller
     }
 
     public function contratos($id)
-{
-    $prestamo = Prestamo::with('cliente')->findOrFail($id);
-    $configuracion = Configuracion::first();
-    $pagos = Pago::where('prestamo_id', $prestamo->id)->get();
+    {
+        $prestamo = Prestamo::with('cliente')->findOrFail($id);
+        $configuracion = Configuracion::first();
+        $pagos = Pago::where('prestamo_id', $prestamo->id)->get();
 
-    $pdf = Pdf::loadView('admin.prestamos.contratos', compact('prestamo', 'configuracion', 'pagos'));
+        $pdf = Pdf::loadView('admin.prestamos.contratos', compact('prestamo', 'configuracion', 'pagos'));
 
-    return $pdf->download('prestamo_' . $prestamo->id . '.pdf');
-}
-public function show($id)
-{
-    $prestamo = Prestamo::with('cliente')->findOrFail($id);
-    $pagos = Pago::where('prestamo_id', $prestamo->id)->get();
+        return $pdf->download('prestamo_' . $prestamo->id . '.pdf');
+    }
 
-    return view('admin.prestamos.show', compact('prestamo', 'pagos'));
-}
+    public function obtenerCliente($id)
+    {
+        $cliente = Cliente::find($id);
 
+        if (!$cliente) {
+            return response()->json(['error' => 'Cliente no encontrado'], 404);
+        }
+
+        return response()->json($cliente);
+    }
 }

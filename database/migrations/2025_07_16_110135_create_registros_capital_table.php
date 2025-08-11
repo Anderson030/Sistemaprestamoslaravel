@@ -9,13 +9,12 @@ return new class extends Migration
     /**
      * Run the migrations.
      */
- public function up()
+public function up()
 {
-    Schema::create('capital_prestamistas', function (Blueprint $table) {
+    Schema::create('registros_capital', function (Blueprint $table) {
         $table->id();
-        $table->unsignedBigInteger('user_id'); // sin ->unique()
-        $table->double('monto_asignado')->default(0);
-        $table->double('monto_disponible')->default(0);
+        $table->decimal('monto', 15, 2);
+        $table->unsignedBigInteger('user_id'); // quién lo registró
         $table->timestamps();
 
         $table->foreign('user_id')->references('id')->on('users')->onDelete('cascade');
@@ -27,6 +26,6 @@ return new class extends Migration
      */
     public function down(): void
     {
-        Schema::dropIfExists('capital_prestamistas');
+        Schema::dropIfExists('registros_capital');
     }
 };

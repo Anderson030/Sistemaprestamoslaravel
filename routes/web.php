@@ -1,6 +1,8 @@
 <?php
 use App\Http\Controllers\PagoParcialController;
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\AuditoriaController;
+
 
 Route::get('/', function () {
     return redirect('/admin');
@@ -62,6 +64,13 @@ Route::middleware(['auth'])->prefix('admin')->name('admin.')->group(function () 
 // Capital Empresa (control de acceso interno en el controlador)
 Route::get('capital', [App\Http\Controllers\CapitalEmpresaController::class, 'index'])->name('capital.index');
 Route::post('capital', [App\Http\Controllers\CapitalEmpresaController::class, 'store'])->name('capital.store');
-Route::post('capital/asignar', [App\Http\Controllers\CapitalEmpresaController::class, 'asignarCapital'])->name('capital.asignar');
+Route::post('capital/asignar', [App\Http\Controllers\CapitalEmpresaController::class, 'asignar'])->name('capital.asignar');
+Route::post('capital/agregar', [App\Http\Controllers\CapitalEmpresaController::class, 'agregar'])->name('capital.agregar');
 
+
+
+  /* ───────────── Ruta Auditorías ───────────── */
+    Route::get('auditorias', [AuditoriaController::class, 'index'])
+         ->name('auditorias.index')
+         ->middleware('role:ADMINISTRADOR|SUPERVISOR|DESARROLLADOR');
 });

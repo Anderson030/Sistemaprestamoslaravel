@@ -9,8 +9,21 @@ class Pago extends Model
 {
     use HasFactory;
 
-    //Relacion un pago pertenece a un prestamo
-    public function prestamo(){
+    protected $fillable = [
+        'prestamo_id',
+        'monto_pagado',
+        'fecha_pago',
+        'metodo_pago',
+        'referencia_pago',
+        'estado',
+        'fecha_cancelado',
+    ];
+
+    /**
+     * Relación: Un pago pertenece a un préstamo.
+     */
+    public function prestamo()
+    {
         return $this->belongsTo(Prestamo::class);
     }
 }

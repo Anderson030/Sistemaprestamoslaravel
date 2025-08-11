@@ -39,8 +39,9 @@
                                     <td class="text-center">{{$contador++}}</td>
                                     <td>{{$prestamo->cliente->nro_documento}}</td>
                                     <td>{{$prestamo->cliente->apellidos." ".$prestamo->cliente->nombres}}</td>
-                                    <td>{{$prestamo->monto_prestado}}</td>
-                                    <td>{{$prestamo->tasa_interes}}</td>
+                                    {{-- Formato pesos colombianos --}}
+                                    <td>$ {{ number_format($prestamo->monto_prestado, 0, ',', '.') }}</td>
+                                    <td>{{$prestamo->tasa_interes}} %</td>
                                     <td>{{$prestamo->modalidad}}</td>
                                     <td>{{$prestamo->nro_cuotas}}</td>
                                     <td>{{$prestamo->fecha_inicio}}</td>

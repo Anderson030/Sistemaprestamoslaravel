@@ -15,7 +15,7 @@
                 </div>
                 <!-- /.card-header -->
                 <div class="card-body">
-                    <form action="{{url('admin/configuraciones/create')}}" method="post" enctype="multipart/form-data">
+                    <form action="{{ route('admin.configuraciones.store') }}" method="POST" enctype="multipart/form-data">
                         @csrf
                        <div class="row">
                            <div class="col-md-9">
