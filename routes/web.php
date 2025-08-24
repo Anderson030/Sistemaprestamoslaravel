@@ -1,8 +1,19 @@
 <?php
-use App\Http\Controllers\PagoParcialController;
-use Illuminate\Support\Facades\Route;
-use App\Http\Controllers\AuditoriaController;
 
+use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\AdminController;
+use App\Http\Controllers\AuditoriaController;
+use App\Http\Controllers\BackupController;
+use App\Http\Controllers\CapitalEmpresaController;
+use App\Http\Controllers\ClienteController;
+use App\Http\Controllers\ConfiguracionController;
+use App\Http\Controllers\NotificacionController;
+use App\Http\Controllers\PagoController;
+use App\Http\Controllers\PagoParcialController;
+use App\Http\Controllers\PrestamistaController;
+use App\Http\Controllers\PrestamoController;
+use App\Http\Controllers\RoleController;
+use App\Http\Controllers\UsuarioController;
 
 Route::get('/', function () {
     return redirect('/admin');
@@ -10,67 +21,130 @@ Route::get('/', function () {
 
 Auth::routes(['register' => false]);
 
-Route::get('/home', [App\Http\Controllers\AdminController::class, 'index'])->name('admin.index.home')->middleware('auth');
-Route::get('/admin', [App\Http\Controllers\AdminController::class, 'index'])->name('admin.index')->middleware('auth');
+Route::get('/home', [AdminController::class, 'index'])
+    ->name('admin.index.home')
+    ->middleware('auth');
 
-// Rutas protegidas por auth y con prefijo admin
+Route::get('/admin', [AdminController::class, 'index'])
+    ->name('admin.index')
+    ->middleware('auth');
+
+/* ================================
+ *  Rutas protegidas con prefijo /admin
+ * ================================*/
 Route::middleware(['auth'])->prefix('admin')->name('admin.')->group(function () {
-    // Configuraciones
-    Route::resource('configuraciones', App\Http\Controllers\ConfiguracionController::class)->except(['edit', 'update', 'destroy']);
-    Route::get('configuraciones/{id}/edit', [App\Http\Controllers\ConfiguracionController::class, 'edit'])->name('configuraciones.edit')->middleware('can:admin.configuracion.edit');
-    Route::put('configuraciones/{id}', [App\Http\Controllers\ConfiguracionController::class, 'update'])->name('configuraciones.update')->middleware('can:admin.configuracion.update');
-    Route::delete('configuraciones/{id}', [App\Http\Controllers\ConfiguracionController::class, 'destroy'])->name('configuraciones.destroy')->middleware('can:admin.configuracion.destroy');
 
-    // Roles
-    Route::resource('roles', App\Http\Controllers\RoleController::class);
-    Route::get('roles/{id}/asignar', [App\Http\Controllers\RoleController::class, 'asignar_roles'])->name('roles.asignar_roles');
-    Route::put('roles/asignar/{id}', [App\Http\Controllers\RoleController::class, 'update_asignar'])->name('roles.update_asignar');
+    /* ───────────── Configuraciones (bloqueado a PRESTAMISTA) ───────────── */
+    Route::resource('configuraciones', ConfiguracionController::class)
+        ->except(['edit', 'update', 'destroy'])
+        ->middleware('role:ADMINISTRADOR|SUPERVISOR|DESARROLLADOR');
 
-    // Usuarios
-    Route::resource('usuarios', App\Http\Controllers\UsuarioController::class);
+    Route::get('configuraciones/{id}/edit', [ConfiguracionController::class, 'edit'])
+        ->name('configuraciones.edit')
+        ->middleware(['can:admin.configuracion.edit', 'role:ADMINISTRADOR|SUPERVISOR|DESARROLLADOR']);
 
-    // Clientes
-    Route::resource('clientes', App\Http\Controllers\ClienteController::class);
+    Route::put('configuraciones/{id}', [ConfiguracionController::class, 'update'])
+        ->name('configuraciones.update')
+        ->middleware(['can:admin.configuracion.update', 'role:ADMINISTRADOR|SUPERVISOR|DESARROLLADOR']);
 
-    // Prestamos
-    Route::get('prestamos/cliente/{id}', [App\Http\Controllers\PrestamoController::class, 'obtenerCliente'])->name('prestamos.cliente.obtenerCliente');
-    Route::get('prestamos/contratos/{id}', [App\Http\Controllers\PrestamoController::class, 'contratos'])->name('prestamos.contratos');
-    Route::resource('prestamos', App\Http\Controllers\PrestamoController::class);
+    Route::delete('configuraciones/{id}', [ConfiguracionController::class, 'destroy'])
+        ->name('configuraciones.destroy')
+        ->middleware(['can:admin.configuracion.destroy', 'role:ADMINISTRADOR|SUPERVISOR|DESARROLLADOR']);
 
-    // Pagos
-    Route::get('pagos/prestamos/cliente/{id}', [App\Http\Controllers\PagoController::class, 'cargar_prestamos_cliente'])->name('pagos.cargar_prestamos_cliente');
-    Route::get('pagos/prestamos/create/{id}', [App\Http\Controllers\PagoController::class, 'create'])->name('pagos.create');
-    Route::post('pagos/create/{id}', [App\Http\Controllers\PagoController::class, 'store'])->name('pagos.store');
-    Route::get('pagos/comprobantedepago/{id}', [App\Http\Controllers\PagoController::class, 'comprobantedepago'])->name('pagos.comprobantedepago');
-    Route::resource('pagos', App\Http\Controllers\PagoController::class)->only(['index', 'show', 'destroy']);
+    /* ───────────── Roles (bloqueado a PRESTAMISTA) ───────────── */
+    Route::resource('roles', RoleController::class)
+        ->middleware('role:ADMINISTRADOR|SUPERVISOR|DESARROLLADOR');
 
-    // Notificaciones
-    Route::get('notificaciones/notificar/{id}', [App\Http\Controllers\NotificacionController::class, 'notificar'])->name('notificaciones.notificar');
-    Route::resource('notificaciones', App\Http\Controllers\NotificacionController::class)->only(['index']);
+    Route::get('roles/{id}/asignar', [RoleController::class, 'asignar_roles'])
+        ->name('roles.asignar_roles')
+        ->middleware('role:ADMINISTRADOR|SUPERVISOR|DESARROLLADOR');
 
-    // Prestamistas
-    Route::get('prestamistas', [App\Http\Controllers\PrestamistaController::class, 'index'])->name('prestamistas.index');
-    Route::get('prestamistas/{id}', [App\Http\Controllers\PrestamistaController::class, 'detalle'])->name('prestamistas.detalle');
-    Route::post('prestamistas/reset', [App\Http\Controllers\PrestamistaController::class, 'reset'])->name('prestamistas.reset');
-    Route::patch('/prestamistas/{id}/eliminar-capital', [App\Http\Controllers\PrestamistaController::class, 'eliminarCapital'])->name('prestamistas.eliminarCapital');
+    Route::put('roles/asignar/{id}', [RoleController::class, 'update_asignar'])
+        ->name('roles.update_asignar')
+        ->middleware('role:ADMINISTRADOR|SUPERVISOR|DESARROLLADOR');
 
+    /* ───────────── Usuarios (bloqueado a PRESTAMISTA) ───────────── */
+    Route::resource('usuarios', UsuarioController::class)
+        ->middleware('role:ADMINISTRADOR|SUPERVISOR|DESARROLLADOR');
 
-    // Backups
-    Route::get('backups/descargar/{nombreArchivo}', [App\Http\Controllers\BackupController::class, 'descargar'])->name('backups.descargar');
-    Route::resource('backups', App\Http\Controllers\BackupController::class)->only(['index', 'create']);
+    /* ───────────── Clientes (acceso como lo tenías) ───────────── */
+    Route::resource('clientes', ClienteController::class);
 
-    // Pagos parciales
-    Route::resource('pagos_parciales', PagoParcialController::class)->only(['index', 'create', 'store', 'destroy']);
-// Capital Empresa (control de acceso interno en el controlador)
-Route::get('capital', [App\Http\Controllers\CapitalEmpresaController::class, 'index'])->name('capital.index');
-Route::post('capital', [App\Http\Controllers\CapitalEmpresaController::class, 'store'])->name('capital.store');
-Route::post('capital/asignar', [App\Http\Controllers\CapitalEmpresaController::class, 'asignar'])->name('capital.asignar');
-Route::post('capital/agregar', [App\Http\Controllers\CapitalEmpresaController::class, 'agregar'])->name('capital.agregar');
+    /* ───────────── Préstamos (acceso como lo tenías) ───────────── */
+    Route::get('prestamos/cliente/{id}', [PrestamoController::class, 'obtenerCliente'])
+        ->name('prestamos.cliente.obtenerCliente');
+    Route::get('prestamos/contratos/{id}', [PrestamoController::class, 'contratos'])
+        ->name('prestamos.contratos');
+    Route::resource('prestamos', PrestamoController::class);
 
+    /* ───────────── Pagos (acceso como lo tenías) ───────────── */
+    Route::get('pagos/prestamos/cliente/{id}', [PagoController::class, 'cargar_prestamos_cliente'])
+        ->name('pagos.cargar_prestamos_cliente');
+    Route::get('pagos/prestamos/create/{id}', [PagoController::class, 'create'])
+        ->name('pagos.create');
+    Route::post('pagos/create/{id}', [PagoController::class, 'store'])
+        ->name('pagos.store');
+    Route::get('pagos/comprobantedepago/{id}', [PagoController::class, 'comprobantedepago'])
+        ->name('pagos.comprobantedepago');
+    Route::resource('pagos', PagoController::class)->only(['index', 'show', 'destroy']);
 
+    /* ───────────── Notificaciones (acceso como lo tenías) ───────────── */
+    Route::get('notificaciones/notificar/{id}', [NotificacionController::class, 'notificar'])
+        ->name('notificaciones.notificar');
+    Route::resource('notificaciones', NotificacionController::class)->only(['index']);
 
-  /* ───────────── Ruta Auditorías ───────────── */
+    /* ───────────── Prestamistas (bloqueado a PRESTAMISTA) ───────────── */
+    Route::get('prestamistas', [PrestamistaController::class, 'index'])
+        ->name('prestamistas.index')
+        ->middleware('role:ADMINISTRADOR|SUPERVISOR|DESARROLLADOR');
+
+    Route::get('prestamistas/{id}', [PrestamistaController::class, 'detalle'])
+        ->name('prestamistas.detalle')
+        ->middleware('role:ADMINISTRADOR|SUPERVISOR|DESARROLLADOR');
+
+    Route::post('prestamistas/reset', [PrestamistaController::class, 'reset'])
+        ->name('prestamistas.reset')
+        ->middleware('role:ADMINISTRADOR|SUPERVISOR|DESARROLLADOR');
+
+    Route::patch('prestamistas/{id}/eliminar-capital', [PrestamistaController::class, 'eliminarCapital'])
+        ->name('prestamistas.eliminarCapital')
+        ->middleware('role:ADMINISTRADOR|SUPERVISOR|DESARROLLADOR');
+
+    /* ───────────── Backups (bloqueado a PRESTAMISTA) ───────────── */
+    Route::get('backups/descargar/{nombreArchivo}', [BackupController::class, 'descargar'])
+        ->name('backups.descargar')
+        ->middleware('role:ADMINISTRADOR|SUPERVISOR|DESARROLLADOR');
+
+    Route::resource('backups', BackupController::class)->only(['index', 'create'])
+        ->middleware('role:ADMINISTRADOR|SUPERVISOR|DESARROLLADOR');
+
+    /* ───────────── Pagos parciales (módulo existente) ───────────── */
+    Route::resource('pagos_parciales', PagoParcialController::class)
+        ->only(['index', 'create', 'store', 'destroy']);
+
+    /* ───────────── Capital Empresa (BLOQUEADO a PRESTAMISTA) ───────────── */
+    Route::middleware('role:ADMINISTRADOR|SUPERVISOR|DESARROLLADOR')->group(function () {
+        Route::get('capital', [CapitalEmpresaController::class, 'index'])
+            ->name('capital.index');
+        Route::post('capital', [CapitalEmpresaController::class, 'store'])
+            ->name('capital.store');
+        Route::post('capital/asignar', [CapitalEmpresaController::class, 'asignar'])
+            ->name('capital.asignar');
+        Route::post('capital/agregar', [CapitalEmpresaController::class, 'agregar'])
+            ->name('capital.agregar');
+    });
+
+    /* ───────────── Auditorías (bloqueado a PRESTAMISTA) ───────────── */
     Route::get('auditorias', [AuditoriaController::class, 'index'])
-         ->name('auditorias.index')
-         ->middleware('role:ADMINISTRADOR|SUPERVISOR|DESARROLLADOR');
+        ->name('auditorias.index')
+        ->middleware('role:ADMINISTRADOR|SUPERVISOR|DESARROLLADOR');
+
+    Route::post('auditorias/gastos', [AuditoriaController::class, 'storeGasto'])
+        ->name('auditorias.gastos.store')
+        ->middleware('role:ADMINISTRADOR|SUPERVISOR|DESARROLLADOR');
+
+    // NUEVO: registrar pago parcial del día (modal)
+    Route::post('auditorias/pago-parcial', [AuditoriaController::class, 'storePagoParcial'])
+        ->name('auditorias.pagosparciales.store')
+        ->middleware('role:ADMINISTRADOR|SUPERVISOR|DESARROLLADOR');
 });
