@@ -15,35 +15,48 @@ class CapitalEmpresaController extends Controller
 {
     public function index()
     {
+        // ====== Opcional: si quieres excluir préstamos/pagos "reportados" de los KPIs ======
+        $filtrarReportado = false;
+
         $capital = EmpresaCapital::latest()->first();
-        $capitalDisponibleBase = $capital->capital_disponible ?? 0;
+        $capitalDisponibleBase = (int) ($capital->capital_disponible ?? 0);
 
-        // Total cobrado (histórico). Si usas "reportado" para cortes,
-        // cámbialo por ->whereNull('reportado').
-        $totalCobrado = Pago::where('estado', 'Confirmado')->sum('monto_pagado');
+        // Total cobrado histórico (solo pagos Confirmados)
+        $totalCobrado = Pago::query()
+            ->when($filtrarReportado, fn($q) => $q->whereNull('reportado'))
+            ->where('estado', 'Confirmado')
+            ->sum('monto_pagado');
 
-        // Dinero circulando = principal aún no recuperado
-        $pagosPorPrestamo = Pago::select('prestamo_id', DB::raw('SUM(monto_pagado) as pagado'))
+        // ===== Dinero circulando con intereses =====
+        // restante = GREATEST(monto_total - pagos_confirmados, 0)
+        $pagosPorPrestamo = Pago::select('prestamo_id', DB::raw('SUM(monto_pagado) AS pagado'))
+            ->when($filtrarReportado, fn($q) => $q->whereNull('reportado'))
             ->where('estado', 'Confirmado')
             ->groupBy('prestamo_id');
 
-        $restantes = Prestamo::leftJoinSub($pagosPorPrestamo, 'pg', 'pg.prestamo_id', '=', 'prestamos.id')
+        $restantes = Prestamo::query()
+            ->leftJoinSub($pagosPorPrestamo, 'pg', 'pg.prestamo_id', '=', 'prestamos.id')
+            ->when($filtrarReportado, fn($q) => $q->whereNull('prestamos.reportado'))
+            ->where('prestamos.estado', 'Pendiente')
             ->select(
                 'prestamos.id',
-                DB::raw('GREATEST(prestamos.monto_prestado - COALESCE(pg.pagado,0), 0) as restante')
+                'prestamos.idusuario',
+                'prestamos.monto_total',
+                DB::raw('COALESCE(pg.pagado, 0) AS pagado_confirmado'),
+                DB::raw('GREATEST(prestamos.monto_total - COALESCE(pg.pagado,0), 0) AS restante')
             )
             ->get();
 
-        $dineroCirculando = (int) $restantes->sum('restante');
+        $dineroCirculando = (int) $restantes->sum('restante');          // ✅ con intereses
         $prestamosActivos = (int) $restantes->where('restante', '>', 0)->count();
 
-        // Caja (dinámica) = caja base + todo lo cobrado
+        // Caja dinámica = caja base + todo lo cobrado
         $capitalDisponible = (int) ($capitalDisponibleBase + $totalCobrado);
 
-        // Capital asignado total (asignado a prestamistas)
+        // Capital asignado a prestamistas
         $capitalAsignadoTotal = (int) CapitalPrestamista::sum('monto_asignado');
 
-        // ✅ Total general = Caja + Asignado + Circulando (como lo pediste)
+        // Total general (criterio acordado)
         $totalGeneral = $capitalDisponible + $capitalAsignadoTotal + $dineroCirculando;
 
         // Usuarios para la tabla de asignaciones
@@ -53,7 +66,7 @@ class CapitalEmpresaController extends Controller
             'capital'               => $capital,
             'usuarios'              => $usuarios,
             'capitalDisponible'     => $capitalDisponible,
-            'dineroCirculando'      => $dineroCirculando,
+            'dineroCirculando'      => $dineroCirculando,  // ← con intereses
             'totalGeneral'          => $totalGeneral,
             'prestamosActivos'      => $prestamosActivos,
             'capitalAsignadoTotal'  => $capitalAsignadoTotal,
@@ -63,29 +76,36 @@ class CapitalEmpresaController extends Controller
     // === JSON para refrescar KPIs sin recargar (opcional) ===
     public function resumenJson()
     {
+        $filtrarReportado = false;
+
         $capital = EmpresaCapital::latest()->first();
-        $capitalDisponibleBase = $capital->capital_disponible ?? 0;
+        $capitalDisponibleBase = (int) ($capital->capital_disponible ?? 0);
 
-        $totalCobrado = Pago::where('estado', 'Confirmado')->sum('monto_pagado');
+        $totalCobrado = Pago::query()
+            ->when($filtrarReportado, fn($q) => $q->whereNull('reportado'))
+            ->where('estado', 'Confirmado')
+            ->sum('monto_pagado');
 
-        $pagosPorPrestamo = Pago::select('prestamo_id', DB::raw('SUM(monto_pagado) as pagado'))
+        $pagosPorPrestamo = Pago::select('prestamo_id', DB::raw('SUM(monto_pagado) AS pagado'))
+            ->when($filtrarReportado, fn($q) => $q->whereNull('reportado'))
             ->where('estado', 'Confirmado')
             ->groupBy('prestamo_id');
 
-        $restantes = Prestamo::leftJoinSub($pagosPorPrestamo, 'pg', 'pg.prestamo_id', '=', 'prestamos.id')
+        $restantes = Prestamo::query()
+            ->leftJoinSub($pagosPorPrestamo, 'pg', 'pg.prestamo_id', '=', 'prestamos.id')
+            ->when($filtrarReportado, fn($q) => $q->whereNull('prestamos.reportado'))
+            ->where('prestamos.estado', 'Pendiente')
             ->select(
                 'prestamos.id',
-                DB::raw('GREATEST(prestamos.monto_prestado - COALESCE(pg.pagado,0), 0) as restante')
+                DB::raw('GREATEST(prestamos.monto_total - COALESCE(pg.pagado,0), 0) AS restante')
             )
             ->get();
 
-        $dineroCirculando = (int) $restantes->sum('restante');
+        $dineroCirculando = (int) $restantes->sum('restante');   // ✅ con intereses
         $prestamosActivos = (int) $restantes->where('restante', '>', 0)->count();
 
         $capitalDisponible    = (int) ($capitalDisponibleBase + $totalCobrado);
         $capitalAsignadoTotal = (int) CapitalPrestamista::sum('monto_asignado');
-
-        // ✅ Mismo criterio que en index()
         $totalGeneral = $capitalDisponible + $capitalAsignadoTotal + $dineroCirculando;
 
         return response()->json([
@@ -97,7 +117,7 @@ class CapitalEmpresaController extends Controller
         ]);
     }
 
-    // ================== CRUD de capital (igual que tenías) ==================
+    // ================== CRUD de capital ==================
 
     public function store(Request $request)
     {
