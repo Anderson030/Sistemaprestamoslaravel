@@ -15,20 +15,16 @@ class CapitalEmpresaController extends Controller
 {
     public function index()
     {
-        // ====== Opcional: si quieres excluir préstamos/pagos "reportados" de los KPIs ======
+        // (Si quisieras excluir filas "reportadas", cambia a true y agrega las columnas/condiciones)
         $filtrarReportado = false;
 
         $capital = EmpresaCapital::latest()->first();
-        $capitalDisponibleBase = (int) ($capital->capital_disponible ?? 0);
+        $capitalDisponible = (int) ($capital->capital_disponible ?? 0); // ✅ Caja disponible = lo guardado en BD
 
-        // Total cobrado histórico (solo pagos Confirmados)
-        $totalCobrado = Pago::query()
-            ->when($filtrarReportado, fn($q) => $q->whereNull('reportado'))
-            ->where('estado', 'Confirmado')
-            ->sum('monto_pagado');
-
-        // ===== Dinero circulando con intereses =====
-        // restante = GREATEST(monto_total - pagos_confirmados, 0)
+        /** ───── Dinero circulando (restante por cobrar) ─────
+         *  restante = GREATEST(monto_total - pagos_confirmados, 0)
+         *  Si quieres sólo capital, cambia monto_total por monto_prestado.
+         */
         $pagosPorPrestamo = Pago::select('prestamo_id', DB::raw('SUM(monto_pagado) AS pagado'))
             ->when($filtrarReportado, fn($q) => $q->whereNull('reportado'))
             ->where('estado', 'Confirmado')
@@ -40,51 +36,40 @@ class CapitalEmpresaController extends Controller
             ->where('prestamos.estado', 'Pendiente')
             ->select(
                 'prestamos.id',
-                'prestamos.idusuario',
-                'prestamos.monto_total',
-                DB::raw('COALESCE(pg.pagado, 0) AS pagado_confirmado'),
                 DB::raw('GREATEST(prestamos.monto_total - COALESCE(pg.pagado,0), 0) AS restante')
+                // Para sólo capital: 'GREATEST(prestamos.monto_prestado - COALESCE(pg.pagado,0), 0) AS restante'
             )
             ->get();
 
-        $dineroCirculando = (int) $restantes->sum('restante');          // ✅ con intereses
+        $dineroCirculando = (int) $restantes->sum('restante');
         $prestamosActivos = (int) $restantes->where('restante', '>', 0)->count();
 
-        // Caja dinámica = caja base + todo lo cobrado
-        $capitalDisponible = (int) ($capitalDisponibleBase + $totalCobrado);
-
-        // Capital asignado a prestamistas
+        // Sólo informativo en la tarjeta, NO participa en total general
         $capitalAsignadoTotal = (int) CapitalPrestamista::sum('monto_asignado');
 
-        // Total general (criterio acordado)
-        $totalGeneral = $capitalDisponible + $capitalAsignadoTotal + $dineroCirculando;
+        // ✅ Total general = Caja disponible + Dinero circulando
+        $totalGeneral = $capitalDisponible + $dineroCirculando;
 
-        // Usuarios para la tabla de asignaciones
         $usuarios = User::role(['ADMINISTRADOR', 'SUPERVISOR', 'PRESTAMISTA'])->get();
 
         return view('admin.capital.index', [
             'capital'               => $capital,
             'usuarios'              => $usuarios,
-            'capitalDisponible'     => $capitalDisponible,
-            'dineroCirculando'      => $dineroCirculando,  // ← con intereses
-            'totalGeneral'          => $totalGeneral,
+            'capitalDisponible'     => $capitalDisponible,   // 🟢 Caja disponible (tal cual BD)
+            'dineroCirculando'      => $dineroCirculando,
+            'totalGeneral'          => $totalGeneral,        // 🟢 Caja + Circulando
             'prestamosActivos'      => $prestamosActivos,
-            'capitalAsignadoTotal'  => $capitalAsignadoTotal,
+            'capitalAsignadoTotal'  => $capitalAsignadoTotal // sólo para mostrar
         ]);
     }
 
-    // === JSON para refrescar KPIs sin recargar (opcional) ===
+    // === Endpoint opcional para refrescar KPIs vía AJAX ===
     public function resumenJson()
     {
         $filtrarReportado = false;
 
         $capital = EmpresaCapital::latest()->first();
-        $capitalDisponibleBase = (int) ($capital->capital_disponible ?? 0);
-
-        $totalCobrado = Pago::query()
-            ->when($filtrarReportado, fn($q) => $q->whereNull('reportado'))
-            ->where('estado', 'Confirmado')
-            ->sum('monto_pagado');
+        $capitalDisponible = (int) ($capital->capital_disponible ?? 0);
 
         $pagosPorPrestamo = Pago::select('prestamo_id', DB::raw('SUM(monto_pagado) AS pagado'))
             ->when($filtrarReportado, fn($q) => $q->whereNull('reportado'))
@@ -101,12 +86,11 @@ class CapitalEmpresaController extends Controller
             )
             ->get();
 
-        $dineroCirculando = (int) $restantes->sum('restante');   // ✅ con intereses
+        $dineroCirculando = (int) $restantes->sum('restante');
         $prestamosActivos = (int) $restantes->where('restante', '>', 0)->count();
-
-        $capitalDisponible    = (int) ($capitalDisponibleBase + $totalCobrado);
         $capitalAsignadoTotal = (int) CapitalPrestamista::sum('monto_asignado');
-        $totalGeneral = $capitalDisponible + $capitalAsignadoTotal + $dineroCirculando;
+
+        $totalGeneral = $capitalDisponible + $dineroCirculando;
 
         return response()->json([
             'capitalDisponible'     => $capitalDisponible,
@@ -119,19 +103,17 @@ class CapitalEmpresaController extends Controller
 
     // ================== CRUD de capital ==================
 
+    // Guardar "capital total disponible" (inicializa caja)
     public function store(Request $request)
     {
         $request->merge(['capital_total' => str_replace(['.', ','], '', $request->capital_total)]);
-
-        $request->validate([
-            'capital_total' => 'required|numeric|min:1',
-        ]);
+        $request->validate(['capital_total' => 'required|numeric|min:1']);
 
         DB::beginTransaction();
         try {
             $capital = EmpresaCapital::create([
                 'capital_total'      => $request->capital_total,
-                'capital_disponible' => $request->capital_total,
+                'capital_disponible' => $request->capital_total, // ✅ Caja = lo ingresado
                 'capital_anterior'   => $request->capital_total,
             ]);
 
@@ -149,6 +131,7 @@ class CapitalEmpresaController extends Controller
         }
     }
 
+    // Agregar capital adicional (suma a caja disponible)
     public function agregar(Request $request)
     {
         $request->merge(['monto' => str_replace(['.', ','], '', $request->monto)]);
@@ -157,9 +140,10 @@ class CapitalEmpresaController extends Controller
         DB::beginTransaction();
         try {
             $capital = EmpresaCapital::latest()->first();
+
             $capital->capital_anterior    = $capital->capital_disponible;
             $capital->capital_total      += $request->monto;
-            $capital->capital_disponible += $request->monto;
+            $capital->capital_disponible += $request->monto; // ✅ suma a Caja
             $capital->save();
 
             RegistroCapital::create([
@@ -176,6 +160,7 @@ class CapitalEmpresaController extends Controller
         }
     }
 
+    // Asignar capital a prestamistas (resta de caja)
     public function asignar(Request $request)
     {
         $capital = EmpresaCapital::latest()->first();
@@ -201,6 +186,7 @@ class CapitalEmpresaController extends Controller
             $capitalPrestamista->monto_disponible += $monto;
             $capitalPrestamista->save();
 
+            // ✅ resta de Caja disponible
             $capital->capital_anterior    = $capital->capital_disponible;
             $capital->capital_disponible -= $monto;
             $capital->save();
