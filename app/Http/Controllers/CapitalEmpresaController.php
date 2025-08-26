@@ -13,104 +13,80 @@ use App\Models\Pago;
 
 class CapitalEmpresaController extends Controller
 {
-   public function index()
-{
-    // 0) Opcional: si quieres excluir items marcados como "reportado"
-    $filtrarReportado = false;
+    public function index()
+    {
+        // 1) Caja persistida (lo que ingresas/ agregas/ asignas/ devuelves)
+        $capital = EmpresaCapital::latest()->first();
+        $caja = (int) ($capital->capital_disponible ?? 0);
 
-    // 1) Base persistida
-    $capital = EmpresaCapital::latest()->first();
-    $capitalDisponiblePersistido = (int) ($capital->capital_disponible ?? 0);
+        // 2) Dinero circulando = saldo restante de préstamos PENDIENTES (con intereses)
+        $pagosPorPrestamo = Pago::select('prestamo_id', DB::raw('SUM(monto_pagado) AS pagado'))
+            ->where('estado', 'Confirmado')
+            ->groupBy('prestamo_id');
 
-    // 2) Total cobrado confirmado (histórico)
-    $totalCobrado = Pago::query()
-        ->when($filtrarReportado, fn($q) => $q->whereNull('reportado'))
-        ->where('estado', 'Confirmado')
-        ->sum('monto_pagado');
+        $restantes = Prestamo::query()
+            ->leftJoinSub($pagosPorPrestamo, 'pg', 'pg.prestamo_id', '=', 'prestamos.id')
+            ->where('prestamos.estado', 'Pendiente')
+            ->select(
+                'prestamos.id',
+                DB::raw('GREATEST(prestamos.monto_total - COALESCE(pg.pagado,0), 0) AS restante')
+            )
+            ->get();
 
-    // 3) Dinero circulando (saldo restante considerando intereses)
-    $pagosPorPrestamo = Pago::select('prestamo_id', DB::raw('SUM(monto_pagado) AS pagado'))
-        ->when($filtrarReportado, fn($q) => $q->whereNull('reportado'))
-        ->where('estado', 'Confirmado')
-        ->groupBy('prestamo_id');
+        $dineroCirculando = (int) $restantes->sum('restante');
+        $prestamosActivos = (int) $restantes->where('restante', '>', 0)->count();
 
-    $restantes = Prestamo::query()
-        ->leftJoinSub($pagosPorPrestamo, 'pg', 'pg.prestamo_id', '=', 'prestamos.id')
-        ->when($filtrarReportado, fn($q) => $q->whereNull('prestamos.reportado'))
-        ->where('prestamos.estado', 'Pendiente')
-        ->select(
-            'prestamos.id',
-            DB::raw('GREATEST(prestamos.monto_total - COALESCE(pg.pagado,0), 0) AS restante')
-        )
-        ->get();
+        // 3) Total general = Caja + Circulando (NO sumamos cobros aquí para que Caja sea exacto)
+        $totalGeneral = $caja + $dineroCirculando;
 
-    $dineroCirculando = (int) $restantes->sum('restante');
-    $prestamosActivos = (int) $restantes->where('restante', '>', 0)->count();
+        // (opcional) si muestras esta tarjeta
+        $capitalAsignadoTotal = (int) CapitalPrestamista::sum('monto_asignado');
 
-    // 4) Caja disponible = base persistida + cobros confirmados
-    $capitalDisponible = $capitalDisponiblePersistido + $totalCobrado;
+        $usuarios = User::role(['ADMINISTRADOR', 'SUPERVISOR', 'PRESTAMISTA'])->get();
 
-    // (Esto NO duplica nada porque capital_disponible no aumenta con pagos; solo cambia con agregar/asignar/devolver)
-    $totalGeneral = $capitalDisponible + $dineroCirculando;
+        return view('admin.capital.index', [
+            'capital'               => $capital,
+            'usuarios'              => $usuarios,
+            'capitalDisponible'     => $caja,              // ← Caja exacta de BD
+            'dineroCirculando'      => $dineroCirculando,
+            'totalGeneral'          => $totalGeneral,
+            'prestamosActivos'      => $prestamosActivos,
+            'capitalAsignadoTotal'  => $capitalAsignadoTotal,
+        ]);
+    }
 
-    // (opcional) capital asignado total si lo muestras en la tarjeta
-    $capitalAsignadoTotal = (int) CapitalPrestamista::sum('monto_asignado');
+    // Si usas AJAX para refrescar tarjetas
+    public function resumenJson()
+    {
+        $capital = EmpresaCapital::latest()->first();
+        $caja = (int) ($capital->capital_disponible ?? 0);
 
-    $usuarios = User::role(['ADMINISTRADOR', 'SUPERVISOR', 'PRESTAMISTA'])->get();
+        $pagosPorPrestamo = Pago::select('prestamo_id', DB::raw('SUM(monto_pagado) AS pagado'))
+            ->where('estado', 'Confirmado')
+            ->groupBy('prestamo_id');
 
-    return view('admin.capital.index', [
-        'capital'               => $capital,
-        'usuarios'              => $usuarios,
-        'capitalDisponible'     => $capitalDisponible,
-        'dineroCirculando'      => $dineroCirculando,
-        'totalGeneral'          => $totalGeneral,
-        'prestamosActivos'      => $prestamosActivos,
-        'capitalAsignadoTotal'  => $capitalAsignadoTotal,
-    ]);
-}
+        $restantes = Prestamo::query()
+            ->leftJoinSub($pagosPorPrestamo, 'pg', 'pg.prestamo_id', '=', 'prestamos.id')
+            ->where('prestamos.estado', 'Pendiente')
+            ->select(DB::raw('GREATEST(prestamos.monto_total - COALESCE(pg.pagado,0), 0) AS restante'))
+            ->get();
 
-public function resumenJson()
-{
-    $filtrarReportado = false;
+        $dineroCirculando = (int) $restantes->sum('restante');
+        $prestamosActivos = (int) $restantes->where('restante', '>', 0)->count();
 
-    $capital = EmpresaCapital::latest()->first();
-    $capitalDisponiblePersistido = (int) ($capital->capital_disponible ?? 0);
+        $totalGeneral = $caja + $dineroCirculando;
 
-    $totalCobrado = Pago::query()
-        ->when($filtrarReportado, fn($q) => $q->whereNull('reportado'))
-        ->where('estado', 'Confirmado')
-        ->sum('monto_pagado');
-
-    $pagosPorPrestamo = Pago::select('prestamo_id', DB::raw('SUM(monto_pagado) AS pagado'))
-        ->when($filtrarReportado, fn($q) => $q->whereNull('reportado'))
-        ->where('estado', 'Confirmado')
-        ->groupBy('prestamo_id');
-
-    $restantes = Prestamo::query()
-        ->leftJoinSub($pagosPorPrestamo, 'pg', 'pg.prestamo_id', '=', 'prestamos.id')
-        ->when($filtrarReportado, fn($q) => $q->whereNull('prestamos.reportado'))
-        ->where('prestamos.estado', 'Pendiente')
-        ->select(DB::raw('GREATEST(prestamos.monto_total - COALESCE(pg.pagado,0), 0) AS restante'))
-        ->get();
-
-    $dineroCirculando = (int) $restantes->sum('restante');
-    $prestamosActivos = (int) $restantes->where('restante', '>', 0)->count();
-
-    $capitalDisponible = $capitalDisponiblePersistido + $totalCobrado;
-    $totalGeneral      = $capitalDisponible + $dineroCirculando;
-
-    return response()->json([
-        'capitalDisponible'     => $capitalDisponible,
-        'dineroCirculando'      => $dineroCirculando,
-        'totalGeneral'          => $totalGeneral,
-        'prestamosActivos'      => $prestamosActivos,
-    ]);
-}
-
+        return response()->json([
+            'capitalDisponible'     => $caja,
+            'dineroCirculando'      => $dineroCirculando,
+            'totalGeneral'          => $totalGeneral,
+            'prestamosActivos'      => $prestamosActivos,
+        ]);
+    }
 
     // ================== CRUD de capital ==================
 
-    // Guardar "capital total disponible" (inicializa caja)
+    // Guardar "capital total disponible" (inicializa caja EXACTA)
     public function store(Request $request)
     {
         $request->merge(['capital_total' => str_replace(['.', ','], '', $request->capital_total)]);
@@ -120,7 +96,7 @@ public function resumenJson()
         try {
             $capital = EmpresaCapital::create([
                 'capital_total'      => $request->capital_total,
-                'capital_disponible' => $request->capital_total, // ✅ Caja = lo ingresado
+                'capital_disponible' => $request->capital_total, // caja EXACTA a lo ingresado
                 'capital_anterior'   => $request->capital_total,
             ]);
 
@@ -138,7 +114,7 @@ public function resumenJson()
         }
     }
 
-    // Agregar capital adicional (suma a caja disponible)
+    // Agregar capital adicional (suma a caja)
     public function agregar(Request $request)
     {
         $request->merge(['monto' => str_replace(['.', ','], '', $request->monto)]);
@@ -150,7 +126,7 @@ public function resumenJson()
 
             $capital->capital_anterior    = $capital->capital_disponible;
             $capital->capital_total      += $request->monto;
-            $capital->capital_disponible += $request->monto; // ✅ suma a Caja
+            $capital->capital_disponible += $request->monto; // suma a caja
             $capital->save();
 
             RegistroCapital::create([
@@ -193,7 +169,7 @@ public function resumenJson()
             $capitalPrestamista->monto_disponible += $monto;
             $capitalPrestamista->save();
 
-            // ✅ resta de Caja disponible
+            // Resta de caja
             $capital->capital_anterior    = $capital->capital_disponible;
             $capital->capital_disponible -= $monto;
             $capital->save();

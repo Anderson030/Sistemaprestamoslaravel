@@ -7,8 +7,10 @@ use App\Models\Configuracion;
 use App\Models\Pago;
 use App\Models\Prestamo;
 use App\Models\EmpresaCapital;
+use App\Models\RegistroCapital;
 use Illuminate\Http\Request;
 use Barryvdh\DomPDF\Facade\Pdf;
+use Illuminate\Support\Facades\DB;
 
 class PagoController extends Controller
 {
@@ -40,37 +42,60 @@ class PagoController extends Controller
         return view('admin.pagos.cargar_datos', compact('datosCliente', 'clientes'));
     }
 
+    /**
+     * Confirma un pago (por id de pago).
+     * - Suma a caja (capital_disponible) y capital_total.
+     * - Registra en registro_capital.
+     * - Si ya estaba confirmado, no hace nada.
+     */
     public function store($id)
     {
-        $pago = Pago::find($id);
+        $pago = Pago::findOrFail($id);
 
-        // ✅ Evitar duplicado si ya está confirmado
-        if ($pago->estado !== "Confirmado") {
-            $pago->estado = "Confirmado";
+        // Ya confirmado => salida limpia
+        if ($pago->estado === 'Confirmado') {
+            return redirect()->back()
+                ->with('mensaje', 'El pago ya estaba confirmado.')
+                ->with('icono', 'info');
+        }
+
+        DB::transaction(function () use ($pago) {
+            // 1) Confirmar pago
+            $pago->estado = 'Confirmado';
             $pago->fecha_cancelado = date('Y-m-d');
             $pago->save();
 
-            // ✅ ACTUALIZAR CAPITAL EMPRESA
-            $capital = EmpresaCapital::first();
-            if ($capital) {
-                $capital->capital_anterior = $capital->capital_disponible;
-$capital->capital_total += $pago->monto_pagado;
-$capital->capital_disponible += $pago->monto_pagado;
+            // 2) Actualizar caja (empresa_capital)
+            $empresa = EmpresaCapital::query()->lockForUpdate()->latest('id')->first();
+            if ($empresa) {
+                $nuevoDisponible = (int)$empresa->capital_disponible + (int)$pago->monto_pagado;
 
-                $capital->save();
+                $empresa->capital_anterior   = $empresa->capital_disponible;
+                $empresa->capital_disponible = $nuevoDisponible;
+                $empresa->capital_total      = (int)$empresa->capital_total + (int)$pago->monto_pagado; // si manejas total acumulado
+                $empresa->save();
             }
 
-            // ✅ Verificar si es el último pago
-            $total_cuotas_faltantes = Pago::where('prestamo_id', $pago->prestamo->id)
+            // 3) Log de movimiento
+            RegistroCapital::create([
+                'monto'       => (int)$pago->monto_pagado,
+                'user_id'     => auth()->id(),
+                'tipo_accion' => 'Pago confirmado ingresa a caja (préstamo #'.$pago->prestamo_id.')',
+            ]);
+
+            // 4) ¿Fue la última cuota?
+            $faltantes = Pago::where('prestamo_id', $pago->prestamo_id)
                 ->where('estado', 'Pendiente')
                 ->count();
 
-            if ($total_cuotas_faltantes == 0) {
-                $prestamo = Prestamo::find($pago->prestamo->id);
-                $prestamo->estado = "Cancelado";
-                $prestamo->save();
+            if ($faltantes === 0) {
+                $prestamo = Prestamo::find($pago->prestamo_id);
+                if ($prestamo) {
+                    $prestamo->estado = 'Cancelado';
+                    $prestamo->save();
+                }
             }
-        }
+        });
 
         return redirect()->back()
             ->with('mensaje', 'Se registró el pago de la manera correcta')
@@ -130,25 +155,55 @@ $capital->capital_disponible += $pago->monto_pagado;
         //
     }
 
+    /**
+     * Revierte la confirmación de un pago:
+     * - Resta de caja y capital_total.
+     * - Deja el pago como Pendiente.
+     * - Deja traza en registro_capital.
+     */
     public function destroy($id)
     {
-        $pago = Pago::find($id);
+        $pago = Pago::findOrFail($id);
 
-        // ✅ Si el pago estaba confirmado, restar del capital
-        if ($pago->estado === "Confirmado") {
-            $capital = EmpresaCapital::first();
-            if ($capital) {
-                $capital->capital_anterior = $capital->capital_disponible;
-                $capital->capital_total -= $pago->monto_pagado;
-                $capital->capital_disponible -= $pago->monto_pagado;
-                $capital->save();
+        DB::transaction(function () use ($pago) {
+            // Si estaba confirmado, revertir caja
+            if ($pago->estado === 'Confirmado') {
+                $empresa = EmpresaCapital::query()->lockForUpdate()->latest('id')->first();
+                if ($empresa) {
+                    $empresa->capital_anterior   = $empresa->capital_disponible;
+                    $empresa->capital_total      = (int)$empresa->capital_total - (int)$pago->monto_pagado;
+                    $empresa->capital_disponible = (int)$empresa->capital_disponible - (int)$pago->monto_pagado;
+                    if ($empresa->capital_disponible < 0) {
+                        $empresa->capital_disponible = 0; // por seguridad
+                    }
+                    $empresa->save();
+                }
+
+                RegistroCapital::create([
+                    'monto'       => (int)$pago->monto_pagado * -1,
+                    'user_id'     => auth()->id(),
+                    'tipo_accion' => 'Reverso de pago confirmado (préstamo #'.$pago->prestamo_id.')',
+                ]);
             }
-        }
 
-        // Revertir el estado del pago
-        $pago->fecha_cancelado = null;
-        $pago->estado = "Pendiente";
-        $pago->save();
+            // Revertir estado del pago
+            $pago->fecha_cancelado = null;
+            $pago->estado = 'Pendiente';
+            $pago->save();
+
+            // Si el préstamo quedó con cuotas pendientes, marcarlo Pendiente (por consistencia)
+            $faltantes = Pago::where('prestamo_id', $pago->prestamo_id)
+                ->where('estado', 'Pendiente')
+                ->count();
+
+            if ($faltantes > 0) {
+                $prestamo = Prestamo::find($pago->prestamo_id);
+                if ($prestamo) {
+                    $prestamo->estado = 'Pendiente';
+                    $prestamo->save();
+                }
+            }
+        });
 
         return redirect()->route('admin.pagos.index')
             ->with('mensaje', 'Se eliminó el pago del cliente de la manera correcta')
