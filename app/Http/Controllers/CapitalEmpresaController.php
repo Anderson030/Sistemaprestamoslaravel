@@ -13,93 +13,100 @@ use App\Models\Pago;
 
 class CapitalEmpresaController extends Controller
 {
-    public function index()
-    {
-        // (Si quisieras excluir filas "reportadas", cambia a true y agrega las columnas/condiciones)
-        $filtrarReportado = false;
+   public function index()
+{
+    // 0) Opcional: si quieres excluir items marcados como "reportado"
+    $filtrarReportado = false;
 
-        $capital = EmpresaCapital::latest()->first();
-        $capitalDisponible = (int) ($capital->capital_disponible ?? 0); // ✅ Caja disponible = lo guardado en BD
+    // 1) Base persistida
+    $capital = EmpresaCapital::latest()->first();
+    $capitalDisponiblePersistido = (int) ($capital->capital_disponible ?? 0);
 
-        /** ───── Dinero circulando (restante por cobrar) ─────
-         *  restante = GREATEST(monto_total - pagos_confirmados, 0)
-         *  Si quieres sólo capital, cambia monto_total por monto_prestado.
-         */
-        $pagosPorPrestamo = Pago::select('prestamo_id', DB::raw('SUM(monto_pagado) AS pagado'))
-            ->when($filtrarReportado, fn($q) => $q->whereNull('reportado'))
-            ->where('estado', 'Confirmado')
-            ->groupBy('prestamo_id');
+    // 2) Total cobrado confirmado (histórico)
+    $totalCobrado = Pago::query()
+        ->when($filtrarReportado, fn($q) => $q->whereNull('reportado'))
+        ->where('estado', 'Confirmado')
+        ->sum('monto_pagado');
 
-        $restantes = Prestamo::query()
-            ->leftJoinSub($pagosPorPrestamo, 'pg', 'pg.prestamo_id', '=', 'prestamos.id')
-            ->when($filtrarReportado, fn($q) => $q->whereNull('prestamos.reportado'))
-            ->where('prestamos.estado', 'Pendiente')
-            ->select(
-                'prestamos.id',
-                DB::raw('GREATEST(prestamos.monto_total - COALESCE(pg.pagado,0), 0) AS restante')
-                // Para sólo capital: 'GREATEST(prestamos.monto_prestado - COALESCE(pg.pagado,0), 0) AS restante'
-            )
-            ->get();
+    // 3) Dinero circulando (saldo restante considerando intereses)
+    $pagosPorPrestamo = Pago::select('prestamo_id', DB::raw('SUM(monto_pagado) AS pagado'))
+        ->when($filtrarReportado, fn($q) => $q->whereNull('reportado'))
+        ->where('estado', 'Confirmado')
+        ->groupBy('prestamo_id');
 
-        $dineroCirculando = (int) $restantes->sum('restante');
-        $prestamosActivos = (int) $restantes->where('restante', '>', 0)->count();
+    $restantes = Prestamo::query()
+        ->leftJoinSub($pagosPorPrestamo, 'pg', 'pg.prestamo_id', '=', 'prestamos.id')
+        ->when($filtrarReportado, fn($q) => $q->whereNull('prestamos.reportado'))
+        ->where('prestamos.estado', 'Pendiente')
+        ->select(
+            'prestamos.id',
+            DB::raw('GREATEST(prestamos.monto_total - COALESCE(pg.pagado,0), 0) AS restante')
+        )
+        ->get();
 
-        // Sólo informativo en la tarjeta, NO participa en total general
-        $capitalAsignadoTotal = (int) CapitalPrestamista::sum('monto_asignado');
+    $dineroCirculando = (int) $restantes->sum('restante');
+    $prestamosActivos = (int) $restantes->where('restante', '>', 0)->count();
 
-        // ✅ Total general = Caja disponible + Dinero circulando
-        $totalGeneral = $capitalDisponible + $dineroCirculando;
+    // 4) Caja disponible = base persistida + cobros confirmados
+    $capitalDisponible = $capitalDisponiblePersistido + $totalCobrado;
 
-        $usuarios = User::role(['ADMINISTRADOR', 'SUPERVISOR', 'PRESTAMISTA'])->get();
+    // (Esto NO duplica nada porque capital_disponible no aumenta con pagos; solo cambia con agregar/asignar/devolver)
+    $totalGeneral = $capitalDisponible + $dineroCirculando;
 
-        return view('admin.capital.index', [
-            'capital'               => $capital,
-            'usuarios'              => $usuarios,
-            'capitalDisponible'     => $capitalDisponible,   // 🟢 Caja disponible (tal cual BD)
-            'dineroCirculando'      => $dineroCirculando,
-            'totalGeneral'          => $totalGeneral,        // 🟢 Caja + Circulando
-            'prestamosActivos'      => $prestamosActivos,
-            'capitalAsignadoTotal'  => $capitalAsignadoTotal // sólo para mostrar
-        ]);
-    }
+    // (opcional) capital asignado total si lo muestras en la tarjeta
+    $capitalAsignadoTotal = (int) CapitalPrestamista::sum('monto_asignado');
 
-    // === Endpoint opcional para refrescar KPIs vía AJAX ===
-    public function resumenJson()
-    {
-        $filtrarReportado = false;
+    $usuarios = User::role(['ADMINISTRADOR', 'SUPERVISOR', 'PRESTAMISTA'])->get();
 
-        $capital = EmpresaCapital::latest()->first();
-        $capitalDisponible = (int) ($capital->capital_disponible ?? 0);
+    return view('admin.capital.index', [
+        'capital'               => $capital,
+        'usuarios'              => $usuarios,
+        'capitalDisponible'     => $capitalDisponible,
+        'dineroCirculando'      => $dineroCirculando,
+        'totalGeneral'          => $totalGeneral,
+        'prestamosActivos'      => $prestamosActivos,
+        'capitalAsignadoTotal'  => $capitalAsignadoTotal,
+    ]);
+}
 
-        $pagosPorPrestamo = Pago::select('prestamo_id', DB::raw('SUM(monto_pagado) AS pagado'))
-            ->when($filtrarReportado, fn($q) => $q->whereNull('reportado'))
-            ->where('estado', 'Confirmado')
-            ->groupBy('prestamo_id');
+public function resumenJson()
+{
+    $filtrarReportado = false;
 
-        $restantes = Prestamo::query()
-            ->leftJoinSub($pagosPorPrestamo, 'pg', 'pg.prestamo_id', '=', 'prestamos.id')
-            ->when($filtrarReportado, fn($q) => $q->whereNull('prestamos.reportado'))
-            ->where('prestamos.estado', 'Pendiente')
-            ->select(
-                'prestamos.id',
-                DB::raw('GREATEST(prestamos.monto_total - COALESCE(pg.pagado,0), 0) AS restante')
-            )
-            ->get();
+    $capital = EmpresaCapital::latest()->first();
+    $capitalDisponiblePersistido = (int) ($capital->capital_disponible ?? 0);
 
-        $dineroCirculando = (int) $restantes->sum('restante');
-        $prestamosActivos = (int) $restantes->where('restante', '>', 0)->count();
-        $capitalAsignadoTotal = (int) CapitalPrestamista::sum('monto_asignado');
+    $totalCobrado = Pago::query()
+        ->when($filtrarReportado, fn($q) => $q->whereNull('reportado'))
+        ->where('estado', 'Confirmado')
+        ->sum('monto_pagado');
 
-        $totalGeneral = $capitalDisponible + $dineroCirculando;
+    $pagosPorPrestamo = Pago::select('prestamo_id', DB::raw('SUM(monto_pagado) AS pagado'))
+        ->when($filtrarReportado, fn($q) => $q->whereNull('reportado'))
+        ->where('estado', 'Confirmado')
+        ->groupBy('prestamo_id');
 
-        return response()->json([
-            'capitalDisponible'     => $capitalDisponible,
-            'dineroCirculando'      => $dineroCirculando,
-            'totalGeneral'          => $totalGeneral,
-            'prestamosActivos'      => $prestamosActivos,
-            'capitalAsignadoTotal'  => $capitalAsignadoTotal,
-        ]);
-    }
+    $restantes = Prestamo::query()
+        ->leftJoinSub($pagosPorPrestamo, 'pg', 'pg.prestamo_id', '=', 'prestamos.id')
+        ->when($filtrarReportado, fn($q) => $q->whereNull('prestamos.reportado'))
+        ->where('prestamos.estado', 'Pendiente')
+        ->select(DB::raw('GREATEST(prestamos.monto_total - COALESCE(pg.pagado,0), 0) AS restante'))
+        ->get();
+
+    $dineroCirculando = (int) $restantes->sum('restante');
+    $prestamosActivos = (int) $restantes->where('restante', '>', 0)->count();
+
+    $capitalDisponible = $capitalDisponiblePersistido + $totalCobrado;
+    $totalGeneral      = $capitalDisponible + $dineroCirculando;
+
+    return response()->json([
+        'capitalDisponible'     => $capitalDisponible,
+        'dineroCirculando'      => $dineroCirculando,
+        'totalGeneral'          => $totalGeneral,
+        'prestamosActivos'      => $prestamosActivos,
+    ]);
+}
+
 
     // ================== CRUD de capital ==================
 
