@@ -6,6 +6,46 @@
 @stop
 
 @section('content')
+
+    {{-- ====== Bloque de alertas (flash & validation) ====== --}}
+    @if(session('mensaje'))
+        @php
+            $tipo = session('icono', 'info');
+            $map  = ['success' => 'success', 'error' => 'danger', 'warning' => 'warning', 'info' => 'info'];
+            $clase = $map[$tipo] ?? 'info';
+        @endphp
+        <div class="alert alert-{{ $clase }} alert-dismissible fade show" role="alert">
+            {!! session('mensaje') !!}
+            <button type="button" class="close" data-dismiss="alert" aria-label="Close">
+                <span aria-hidden="true">×</span>
+            </button>
+        </div>
+    @endif
+
+    @if(session('error'))
+        <div class="alert alert-danger alert-dismissible fade show" role="alert">
+            {!! session('error') !!}
+            <button type="button" class="close" data-dismiss="alert" aria-label="Close">
+                <span aria-hidden="true">×</span>
+            </button>
+        </div>
+    @endif
+
+    @if ($errors->any())
+        <div class="alert alert-danger alert-dismissible fade show" role="alert">
+            <strong>Revisa los campos:</strong>
+            <ul class="mb-0 mt-1">
+                @foreach ($errors->all() as $e)
+                    <li>{{ $e }}</li>
+                @endforeach
+            </ul>
+            <button type="button" class="close" data-dismiss="alert" aria-label="Close">
+                <span aria-hidden="true">×</span>
+            </button>
+        </div>
+    @endif
+    {{-- ====== /Bloque de alertas ====== --}}
+
     <form action="{{ route('admin.prestamos.store') }}" method="post">
         @csrf
         <div class="row">
@@ -147,8 +187,16 @@
 @stop
 
 @section('js')
-@section('js')
 <script>
+    // Auto-cierre de alertas después de 6s
+    setTimeout(() => {
+        document.querySelectorAll('.alert-dismissible').forEach(el => {
+            if (el.classList.contains('show')) {
+                $(el).alert('close');
+            }
+        });
+    }, 6000);
+
     let tasaAutorizada = 20; // Por defecto
 
     $('.select2').select2({});
@@ -223,56 +271,53 @@
 
         calcularPrestamo();
     });
-function calcularPrestamo() {
-    let montoRaw = $('#monto_prestado').val();
-    if (!montoRaw) return;
 
-    montoRaw = montoRaw.toString().replace(/[^\d]/g, '');
-    const montoPrestado = parseFloat(montoRaw);
-    const nroCuotas = parseInt($('#nro_cuotas').val());
-    const modalidad = $('#modalidad').val();
+    function calcularPrestamo() {
+        let montoRaw = $('#monto_prestado').val();
+        if (!montoRaw) return;
 
-    if (isNaN(montoPrestado) || isNaN(nroCuotas) || montoPrestado <= 0 || nroCuotas <= 0) return;
+        montoRaw = montoRaw.toString().replace(/[^\d]/g, '');
+        const montoPrestado = parseFloat(montoRaw);
+        const nroCuotas = parseInt($('#nro_cuotas').val());
+        const modalidad = $('#modalidad').val();
 
-    let baseCuotas = 0;
-    let interesBase = 0;
-    let interesExtraPorCuota = 0;
+        if (isNaN(montoPrestado) || isNaN(nroCuotas) || montoPrestado <= 0 || nroCuotas <= 0) return;
 
-    switch (modalidad) {
-        case 'Diario':
-            baseCuotas = 30;
-            break;
-        case 'Semanal':
-            baseCuotas = 4;
-            break;
-        case 'Quincenal':
-            baseCuotas = 2;
-            break;
-        default:
-            baseCuotas = 0;
-            break;
+        let baseCuotas = 0;
+        let interesBase = 0;
+        let interesExtraPorCuota = 0;
+
+        switch (modalidad) {
+            case 'Diario':
+                baseCuotas = 30;
+                break;
+            case 'Semanal':
+                baseCuotas = 4;
+                break;
+            case 'Quincenal':
+                baseCuotas = 2;
+                break;
+            default:
+                baseCuotas = 0;
+                break;
+        }
+
+        interesBase = montoPrestado * (tasaAutorizada / 100);
+        interesExtraPorCuota = montoPrestado * (tasaAutorizada / 100) / baseCuotas;
+
+        const cuotasExtras = Math.max(0, nroCuotas - baseCuotas);
+        const interesExtra = interesExtraPorCuota * cuotasExtras;
+        const interesTotal = interesBase + interesExtra;
+        const totalCancelar = montoPrestado + interesTotal;
+        const cuota = totalCancelar / nroCuotas;
+
+        $('#monto_cuota').val('$ ' + cuota.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, '.'));
+        $('#monto_interes').val('$ ' + interesTotal.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, '.'));
+        $('#monto_final').val('$ ' + totalCancelar.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, '.'));
+
+        $('#monto_cuota2').val(cuota.toFixed(2));
+        $('#monto_final2').val(totalCancelar.toFixed(2));
     }
-
-    interesBase = montoPrestado * (tasaAutorizada / 100);
-    interesExtraPorCuota = montoPrestado * (tasaAutorizada / 100) / baseCuotas;
-
-    const cuotasExtras = Math.max(0, nroCuotas - baseCuotas);
-    const interesExtra = interesExtraPorCuota * cuotasExtras;
-    const interesTotal = interesBase + interesExtra;
-    const totalCancelar = montoPrestado + interesTotal;
-    const cuota = totalCancelar / nroCuotas;
-
-    $('#monto_cuota').val('$ ' + cuota.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, '.'));
-    $('#monto_interes').val('$ ' + interesTotal.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, '.'));
-    $('#monto_final').val('$ ' + totalCancelar.toFixed(0).replace(/\B(?=(\d{3})+(?!\d))/g, '.'));
-
-    $('#monto_cuota2').val(cuota.toFixed(2));
-    $('#monto_final2').val(totalCancelar.toFixed(2));
-}
-
-
-
-
 
     // Recalcular si se cambian los valores
     $('#monto_prestado').on('change', function () {
@@ -281,7 +326,4 @@ function calcularPrestamo() {
 
     $('#nro_cuotas').on('change keyup', calcularPrestamo);
 </script>
-
-@stop
-
 @stop

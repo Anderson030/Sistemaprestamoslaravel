@@ -15,39 +15,45 @@ class CapitalEmpresaController extends Controller
 {
     public function index()
     {
-        // 1) Caja persistida (lo que ingresas/ agregas/ asignas/ devuelves)
         $capital = EmpresaCapital::latest()->first();
         $caja = (int) ($capital->capital_disponible ?? 0);
 
-        // 2) Dinero circulando = saldo restante de préstamos PENDIENTES (con intereses)
-        $pagosPorPrestamo = Pago::select('prestamo_id', DB::raw('SUM(monto_pagado) AS pagado'))
-            ->where('estado', 'Confirmado')
-            ->groupBy('prestamo_id');
+        // Dinero circulando (préstamos pendientes menos cobros y abonos de cuotas aún pendientes)
+        [$dineroCirculando, $prestamosActivos] = $this->calcularCirculando();
 
-        $restantes = Prestamo::query()
-            ->leftJoinSub($pagosPorPrestamo, 'pg', 'pg.prestamo_id', '=', 'prestamos.id')
-            ->where('prestamos.estado', 'Pendiente')
-            ->select(
-                'prestamos.id',
-                DB::raw('GREATEST(prestamos.monto_total - COALESCE(pg.pagado,0), 0) AS restante')
-            )
-            ->get();
+        // Capital asignado total = asignado a prestamistas + saldo asesores (cobros/abonos no pasados a caja)
+        $capitalAsignadoTotal = $this->calcularCapitalAsignadoTotal($capital);
 
-        $dineroCirculando = (int) $restantes->sum('restante');
-        $prestamosActivos = (int) $restantes->where('restante', '>', 0)->count();
-
-        // 3) Total general = Caja + Circulando (NO sumamos cobros aquí para que Caja sea exacto)
-        $totalGeneral = $caja + $dineroCirculando;
-
-        // (opcional) si muestras esta tarjeta
-        $capitalAsignadoTotal = (int) CapitalPrestamista::sum('monto_asignado');
+        // Total general = Caja + Circulando + Capital asignado total
+        $totalGeneral = $caja + $dineroCirculando + $capitalAsignadoTotal;
 
         $usuarios = User::role(['ADMINISTRADOR', 'SUPERVISOR', 'PRESTAMISTA'])->get();
 
         return view('admin.capital.index', [
-            'capital'               => $capital,
-            'usuarios'              => $usuarios,
-            'capitalDisponible'     => $caja,              // ← Caja exacta de BD
+            'capital'                     => $capital,
+            'usuarios'                    => $usuarios,
+            'capitalDisponible'           => $caja,
+            'dineroCirculando'            => $dineroCirculando,
+            'totalGeneral'                => $totalGeneral,
+            'prestamosActivos'            => $prestamosActivos,
+            'capitalAsignadoTotal'        => $capitalAsignadoTotal,
+            'capitalAsignadoPrestamistas' => $capitalAsignadoTotal, // alias si tu vista lo usa
+        ]);
+    }
+
+    // Endpoint AJAX para refrescar tarjetas
+    public function resumenJson()
+    {
+        $capital = EmpresaCapital::latest()->first();
+        $caja = (int) ($capital->capital_disponible ?? 0);
+
+        [$dineroCirculando, $prestamosActivos] = $this->calcularCirculando();
+        $capitalAsignadoTotal = $this->calcularCapitalAsignadoTotal($capital);
+
+        $totalGeneral = $caja + $dineroCirculando + $capitalAsignadoTotal;
+
+        return response()->json([
+            'capitalDisponible'     => $caja,
             'dineroCirculando'      => $dineroCirculando,
             'totalGeneral'          => $totalGeneral,
             'prestamosActivos'      => $prestamosActivos,
@@ -55,38 +61,58 @@ class CapitalEmpresaController extends Controller
         ]);
     }
 
-    // Si usas AJAX para refrescar tarjetas
-    public function resumenJson()
+    /**
+     * Dinero circulando = SUM_por_préstamo(
+     *   max( monto_total - pagos_confirmados - abonos_de_cuotas_aún_pendientes, 0 )
+     * )
+     * Como `pagos` no tiene nro_cuota, contamos cuántas cuotas están confirmadas
+     * y restamos abonos con nro_cuota > #confirmadas.
+     */
+    private function calcularCirculando(): array
     {
-        $capital = EmpresaCapital::latest()->first();
-        $caja = (int) ($capital->capital_disponible ?? 0);
-
-        $pagosPorPrestamo = Pago::select('prestamo_id', DB::raw('SUM(monto_pagado) AS pagado'))
+        $pagosConfirmados = Pago::query()
             ->where('estado', 'Confirmado')
+            ->selectRaw('prestamo_id, SUM(monto_pagado) AS pagado, COUNT(*) AS cuotas_confirmadas')
             ->groupBy('prestamo_id');
 
+        $abonosPendientes = DB::table('abonos AS a')
+            ->leftJoinSub($pagosConfirmados, 'pc', function ($j) {
+                $j->on('pc.prestamo_id', '=', 'a.prestamo_id');
+            })
+            ->whereRaw('a.nro_cuota > COALESCE(pc.cuotas_confirmadas, 0)')
+            ->selectRaw('a.prestamo_id, SUM(COALESCE(a.monto, a.monto_abonado, 0)) AS abonado_pendiente')
+            ->groupBy('a.prestamo_id');
+
         $restantes = Prestamo::query()
-            ->leftJoinSub($pagosPorPrestamo, 'pg', 'pg.prestamo_id', '=', 'prestamos.id')
-            ->where('prestamos.estado', 'Pendiente')
-            ->select(DB::raw('GREATEST(prestamos.monto_total - COALESCE(pg.pagado,0), 0) AS restante'))
+            ->leftJoinSub($pagosConfirmados, 'pc', 'pc.prestamo_id', '=', 'prestamos.id')
+            ->leftJoinSub($abonosPendientes, 'abp', 'abp.prestamo_id', '=', 'prestamos.id')
+            ->select(
+                'prestamos.id',
+                DB::raw('GREATEST(
+                    prestamos.monto_total
+                    - COALESCE(pc.pagado, 0)
+                    - COALESCE(abp.abonado_pendiente, 0),
+                0) AS restante')
+            )
             ->get();
 
         $dineroCirculando = (int) $restantes->sum('restante');
         $prestamosActivos = (int) $restantes->where('restante', '>', 0)->count();
 
-        $totalGeneral = $caja + $dineroCirculando;
+        return [$dineroCirculando, $prestamosActivos];
+    }
 
-        return response()->json([
-            'capitalDisponible'     => $caja,
-            'dineroCirculando'      => $dineroCirculando,
-            'totalGeneral'          => $totalGeneral,
-            'prestamosActivos'      => $prestamosActivos,
-        ]);
+    /** Suma (asignado a prestamistas) + (saldo asesores/ruta no pasado a caja). */
+    private function calcularCapitalAsignadoTotal(?EmpresaCapital $empresa): int
+    {
+        $asignadoPrestamistas = (int) CapitalPrestamista::sum('monto_asignado');
+        $saldoAsesoresRuta    = (int) ($empresa->capital_asignado_total ?? 0);
+        return $asignadoPrestamistas + $saldoAsesoresRuta;
     }
 
     // ================== CRUD de capital ==================
 
-    // Guardar "capital total disponible" (inicializa caja EXACTA)
+    // Guardar capital total (inicializa caja EXACTA)
     public function store(Request $request)
     {
         $request->merge(['capital_total' => str_replace(['.', ','], '', $request->capital_total)]);
@@ -95,9 +121,10 @@ class CapitalEmpresaController extends Controller
         DB::beginTransaction();
         try {
             $capital = EmpresaCapital::create([
-                'capital_total'      => $request->capital_total,
-                'capital_disponible' => $request->capital_total, // caja EXACTA a lo ingresado
-                'capital_anterior'   => $request->capital_total,
+                'capital_total'          => $request->capital_total,
+                'capital_disponible'     => $request->capital_total,
+                'capital_anterior'       => $request->capital_total,
+                'capital_asignado_total' => 0,
             ]);
 
             RegistroCapital::create([
@@ -126,7 +153,7 @@ class CapitalEmpresaController extends Controller
 
             $capital->capital_anterior    = $capital->capital_disponible;
             $capital->capital_total      += $request->monto;
-            $capital->capital_disponible += $request->monto; // suma a caja
+            $capital->capital_disponible += $request->monto;
             $capital->save();
 
             RegistroCapital::create([
@@ -143,13 +170,16 @@ class CapitalEmpresaController extends Controller
         }
     }
 
-    // Asignar capital a prestamistas (resta de caja)
+    // Asignar capital a prestamistas (resta de caja y lo deja “afuera” con el asesor)
     public function asignar(Request $request)
     {
         $capital = EmpresaCapital::latest()->first();
 
         $montoCrudo = $request->montos[$request->asignar_id] ?? 0;
         $monto = (int) str_replace(['.', ','], '', $montoCrudo);
+
+        // Nuevo: confirmación opcional (frontend debe enviar hidden "confirmar")
+        $confirmar = filter_var($request->input('confirmar', null), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
 
         if (!$monto || $monto <= 0) {
             return back()->with('error', 'Debe ingresar un monto válido para asignar.');
@@ -159,6 +189,11 @@ class CapitalEmpresaController extends Controller
             return back()->with('error', 'El monto excede el capital disponible.');
         }
 
+        // Si el campo "confirmar" viene explícito y es falso, cancelar
+        if ($confirmar === false) {
+            return back()->with('info', '🛑 Operación cancelada por el usuario.');
+        }
+
         DB::beginTransaction();
         try {
             $capitalPrestamista = CapitalPrestamista::firstOrCreate([
@@ -166,10 +201,9 @@ class CapitalEmpresaController extends Controller
             ]);
 
             $capitalPrestamista->monto_asignado   += $monto;
-            $capitalPrestamista->monto_disponible += $monto;
+            $capitalPrestamista->monto_disponible += $monto; // si manejas “disponible”
             $capitalPrestamista->save();
 
-            // Resta de caja
             $capital->capital_anterior    = $capital->capital_disponible;
             $capital->capital_disponible -= $monto;
             $capital->save();
@@ -182,10 +216,130 @@ class CapitalEmpresaController extends Controller
             ]);
 
             DB::commit();
-            return back()->with('success', 'Capital asignado correctamente.');
+            return back()->with('success', '✅ Capital asignado correctamente.');
         } catch (\Exception $e) {
             DB::rollBack();
             return back()->with('error', 'Error al asignar capital.');
         }
+    }
+
+    /**
+     * Pasar un MONTO específico del saldo de asesores (ruta) a Caja.
+     * Solo afecta empresa.capital_asignado_total.
+     */
+    public function pasarACaja(Request $request)
+    {
+        $montoCrudo = $request->input('monto');
+        $monto = (int) str_replace(['.', ','], '', (string) $montoCrudo);
+
+        $request->merge(['monto' => $monto]);
+        $request->validate(['monto' => ['required','numeric','min:1']]);
+
+        return DB::transaction(function () use ($monto) {
+            $empresa = EmpresaCapital::query()->lockForUpdate()->latest('id')->first();
+
+            if (!$empresa) {
+                return back()->with('error', 'No hay registro de capital de empresa.');
+            }
+
+            $saldoAbonos = (int) ($empresa->capital_asignado_total ?? 0);
+            if ($monto > $saldoAbonos) {
+                $monto = $saldoAbonos;
+            }
+
+            if ($monto <= 0) {
+                return back()->with('info', 'No hay saldo para transferir.');
+            }
+
+            $empresa->capital_anterior       = $empresa->capital_disponible;
+            $empresa->capital_asignado_total = $saldoAbonos - $monto;
+            $empresa->capital_disponible     = (int) $empresa->capital_disponible + $monto;
+            $empresa->save();
+
+            RegistroCapital::create([
+                'monto'       => (int) $monto,
+                'user_id'     => auth()->id(),
+                'tipo_accion' => 'Traslado de abonos a Caja',
+            ]);
+
+            return back()->with('success', 'Transferencia realizada a Caja.');
+        });
+    }
+
+    /**
+     * **PASAR TODO** lo que muestra “Capital asignado total” a Caja:
+     *  - Saldo de asesores (empresa.capital_asignado_total)
+     *  - Asignaciones a prestamistas (capital_prestamistas.monto_asignado)
+     *
+     * Mantengo el mismo endpoint que ya usas en el botón.
+     */
+    public function pasarAbonosACaja(Request $request)
+    {
+        return DB::transaction(function () {
+            $empresa = EmpresaCapital::query()->lockForUpdate()->latest('id')->firstOrFail();
+
+            $saldoAsesores   = (int) ($empresa->capital_asignado_total ?? 0);
+            $asignadoFuera   = (int) CapitalPrestamista::sum('monto_asignado');
+            $totalATransferir = $saldoAsesores + $asignadoFuera;
+
+            if ($totalATransferir <= 0) {
+                return back()->with('info', 'No hay saldo para transferir.');
+            }
+
+            // Caja += todo; saldo asesores → 0; asignaciones → 0
+            $empresa->capital_anterior       = (int) $empresa->capital_disponible;
+            $empresa->capital_disponible     = (int) $empresa->capital_disponible + $totalATransferir;
+            $empresa->capital_asignado_total = 0;
+            $empresa->save();
+
+            if ($asignadoFuera > 0) {
+                CapitalPrestamista::query()->update([
+                    'monto_asignado'   => 0,
+                    'monto_disponible' => 0,
+                ]);
+            }
+
+            RegistroCapital::create([
+                'monto'       => $totalATransferir,
+                'user_id'     => auth()->id(),
+                'tipo_accion' => 'Traslado de Capital asignado total a Caja (abonos + asignaciones)',
+            ]);
+
+            return back()->with('success', 'Se transfirió a Caja el Capital asignado total.');
+        });
+    }
+
+    /**
+     * Devolver SOLO las asignaciones de CapitalPrestamista a Caja.
+     * (Sigue disponible si lo necesitas aparte.)
+     */
+    public function pasarAsignadoACaja(Request $request)
+    {
+        return DB::transaction(function () use ($request) {
+
+            $totalAsignado = (int) CapitalPrestamista::sum('monto_asignado');
+            if ($totalAsignado <= 0) {
+                return back()->with('warning', 'No hay capital asignado para devolver.');
+            }
+
+            $empresa = EmpresaCapital::query()->lockForUpdate()->latest('id')->firstOrFail();
+
+            $empresa->capital_anterior   = $empresa->capital_disponible;
+            $empresa->capital_disponible = (int) $empresa->capital_disponible + $totalAsignado;
+            $empresa->save();
+
+            CapitalPrestamista::query()->update([
+                'monto_asignado'   => 0,
+                'monto_disponible' => 0,
+            ]);
+
+            RegistroCapital::create([
+                'monto'       => $totalAsignado,
+                'user_id'     => $request->user()->id ?? auth()->id(),
+                'tipo_accion' => 'Capital devuelto desde asignaciones',
+            ]);
+
+            return back()->with('success', "Se devolvieron $totalAsignado a Caja disponible y se limpiaron las asignaciones.");
+        });
     }
 }

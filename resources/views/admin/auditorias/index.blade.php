@@ -20,10 +20,6 @@
           <button type="button" class="btn btn-secondary mr-2" data-toggle="modal" data-target="#modalGasto">
             <i class="fas fa-plus-circle"></i> Registrar gasto del día
           </button>
-
-          <button type="button" class="btn btn-primary" data-toggle="modal" data-target="#modalPagoParcial">
-            <i class="fas fa-cash-register"></i> Pagos parciales del día
-          </button>
         </div>
       </div>
 
