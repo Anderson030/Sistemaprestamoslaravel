@@ -26,50 +26,64 @@
                                 <th style="text-align: center">Acción</th>
                             </tr>
                             </thead>
-                            <tbody>
-                            @php $contador = 1; @endphp
-                            @foreach($pagos as $pago)
-                                @if(!$pago->fecha_cancelado == null)
-                                    <tr>
-                                        <td style="text-align: center">{{$contador++}}</td>
-                                        <td style="text-align: center">{{$pago->prestamo->cliente->nro_documento}}</td>
-                                        <td>{{$pago->prestamo->cliente->apellidos." ".$pago->prestamo->cliente->nombres}}</td>
-                                        {{-- Formato pesos colombianos --}}
-                                        <td style="text-align: center">$ {{ number_format($pago->monto_pagado, 0, ',', '.') }}</td>
-                                        <td style="text-align: center">{{$pago->referencia_pago}}</td>
-                                        <td style="text-align: center">{{$pago->fecha_cancelado}}</td>
-                                        <td style="text-align: center">
-                                            <div class="btn-group" role="group">
-                                                <a href="{{url('/admin/pagos',$pago->id)}}" class="btn btn-info btn-sm"><i class="fas fa-eye"></i></a>
-                                                <a href="{{url('/admin/pagos/comprobantedepago',$pago->id)}}" class="btn btn-warning btn-sm"><i class="fas fa-print"></i></a>
-                                                <form action="{{url('/admin/pagos',$pago->id)}}" method="post" id="miFormulario{{$pago->id}}" onclick="preguntar{{$pago->id}}(event)">
-                                                    @csrf
-                                                    <button type="submit" class="btn btn-danger btn-sm"><i class="fas fa-trash"></i></button>
-                                                </form>
-                                                <script>
-                                                    function preguntar{{$pago->id}}(event) {
-                                                        event.preventDefault();
-                                                        Swal.fire({
-                                                            title: '¿Desea eliminar esta registro?',
-                                                            icon: 'question',
-                                                            showDenyButton: true,
-                                                            confirmButtonText: 'Eliminar',
-                                                            confirmButtonColor: '#a5161d',
-                                                            denyButtonColor: '#270a0a',
-                                                            denyButtonText: 'Cancelar',
-                                                        }).then((result) => {
-                                                            if (result.isConfirmed) {
-                                                                document.getElementById('miFormulario{{$pago->id}}').submit();
-                                                            }
-                                                        });
-                                                    }
-                                                </script>
-                                            </div>
-                                        </td>
-                                    </tr>
-                                @endif
-                            @endforeach
-                            </tbody>
+                           <tbody>
+@php $contador = 1; @endphp
+@foreach($pagos as $pago)
+    @if($pago->fecha_cancelado)  {{-- estaba: !$pago->fecha_cancelado == null --}}
+        <tr>
+            <td class="text-center">{{ $contador++ }}</td>
+            <td class="text-center">{{ $pago->prestamo->cliente->nro_documento }}</td>
+            <td>{{ $pago->prestamo->cliente->apellidos." ".$pago->prestamo->cliente->nombres }}</td>
+
+            {{-- Muestra lo REALMENTE pagado (cuota - abonos de esa cuota) --}}
+            <td class="text-center">
+                $ {{ number_format($pago->monto_real_pagado ?? $pago->monto_pagado, 0, ',', '.') }}
+                @if(!empty($pago->es_pago_parcial))
+                    <span class="badge badge-warning ml-1">Pago parcial</span>
+                @else
+                    <span class="badge badge-success ml-1">Pago completo</span>
+                @endif
+            </td>
+
+            <td class="text-center">{{ $pago->referencia_pago }}</td>
+            <td class="text-center">{{ $pago->fecha_cancelado }}</td>
+            <td class="text-center">
+                <div class="btn-group" role="group">
+                    <a href="{{ url('/admin/pagos', $pago->id) }}" class="btn btn-info btn-sm">
+                        <i class="fas fa-eye"></i>
+                    </a>
+                    <a href="{{ url('/admin/pagos/comprobantedepago', $pago->id) }}" class="btn btn-warning btn-sm">
+                        <i class="fas fa-print"></i>
+                    </a>
+                    <form action="{{ url('/admin/pagos', $pago->id) }}" method="post" id="miFormulario{{ $pago->id }}" onclick="preguntar{{ $pago->id }}(event)">
+                        @csrf
+                        <button type="submit" class="btn btn-danger btn-sm"><i class="fas fa-trash"></i></button>
+                    </form>
+                    <script>
+                        function preguntar{{ $pago->id }}(event) {
+                            event.preventDefault();
+                            Swal.fire({
+                                title: '¿Desea eliminar esta registro?',
+                                icon: 'question',
+                                showDenyButton: true,
+                                confirmButtonText: 'Eliminar',
+                                confirmButtonColor: '#a5161d',
+                                denyButtonColor: '#270a0a',
+                                denyButtonText: 'Cancelar',
+                            }).then((result) => {
+                                if (result.isConfirmed) {
+                                    document.getElementById('miFormulario{{ $pago->id }}').submit();
+                                }
+                            });
+                        }
+                    </script>
+                </div>
+            </td>
+        </tr>
+    @endif
+@endforeach
+</tbody>
+
                         </table>
                     </div>
                 </div>

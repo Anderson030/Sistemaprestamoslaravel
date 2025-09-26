@@ -8,13 +8,13 @@ use App\Models\Pago;
 use App\Models\Prestamo;
 use App\Models\CapitalPrestamista;
 use App\Models\MovimientoCapitalPrestamista;
-use App\Models\Abono; // ← para sumar abonos
-use App\Models\EmpresaCapital;      // ← capital empresa (tablero)
-use App\Models\RegistroCapital;     // ← log de movimientos de capital
+use App\Models\Abono;
+use App\Models\EmpresaCapital;
+use App\Models\RegistroCapital;
 use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Barryvdh\DomPDF\Facade\Pdf;
-use Illuminate\Support\Facades\DB; // ← para transacciones
+use Illuminate\Support\Facades\DB;
 
 class PrestamoController extends Controller
 {
@@ -37,85 +37,157 @@ class PrestamoController extends Controller
 
     public function create()
     {
-        if (auth()->user()->hasRole('PRESTAMISTA')) {
-            $clientes = Cliente::where('idusuario', auth()->id())->get();
-        } else {
-            $clientes = Cliente::all();
-        }
+        $clientes = auth()->user()->hasRole('PRESTAMISTA')
+            ? Cliente::where('idusuario', auth()->id())->get()
+            : Cliente::all();
 
         return view('admin.prestamos.create', compact('clientes'));
     }
 
-    public function store(Request $request)
-    {
-        $request->validate([
-            'cliente_id'     => 'required',
-            'monto_prestado' => 'required',
-            'tasa_interes'   => 'required',
-            'modalidad'      => 'required',
-            'nro_cuotas'     => 'required',
-            'fecha_inicio'   => 'required',
-            'monto_total'    => 'required',
-            'monto_cuota'    => 'required',
-        ]);
+   public function store(Request $request)
+{
+    // Normalizar montos (quitar separadores)
+    $request->merge([
+        'monto_prestado' => str_replace(['.', ','], '', $request->monto_prestado),
+        'monto_total'    => str_replace(['.', ','], '', $request->monto_total),
+        'monto_cuota'    => str_replace(['.', ','], '', $request->monto_cuota),
+    ]);
 
-        $prestamo = new Prestamo();
-        $prestamo->cliente_id     = $request->cliente_id;
-        $prestamo->monto_prestado = $request->monto_prestado;
-        $prestamo->tasa_interes   = $request->tasa_interes;
-        $prestamo->modalidad      = $request->modalidad;
-        $prestamo->nro_cuotas     = $request->nro_cuotas;
-        $prestamo->fecha_inicio   = $request->fecha_inicio;
-        $prestamo->monto_total    = $request->monto_total;
-        $prestamo->idusuario      = auth()->id();
-        $prestamo->save();
+    $request->validate([
+        'cliente_id'     => 'required',
+        'monto_prestado' => 'required|numeric|min:1',
+        'tasa_interes'   => 'required|numeric',
+        'modalidad'      => 'required|in:Diario,Semanal,Quincenal,Mensual,Anual',
+        'nro_cuotas'     => 'required|integer|min:1',
+        'fecha_inicio'   => 'required|date',
+        'monto_total'    => 'required|numeric|min:1',
+        'monto_cuota'    => 'required|numeric|min:1',
+    ]);
 
-        for ($i = 1; $i <= $request->nro_cuotas; $i++) {
-            $pago = new Pago();
-            $pago->prestamo_id  = $prestamo->id;
-            $pago->monto_pagado = $request->monto_cuota;
+    $usuario         = auth()->user();
+    $ownerId         = (int) ($request->input('prestamista_id') ?: $usuario->id);
+    $montoSolicitado = (int) $request->monto_prestado;
 
-            $fechaInicio = Carbon::parse($request->fecha_inicio);
-            switch ($request->modalidad) {
-                case 'Diario':    $fechaVencimiento = $fechaInicio->copy()->addDays($i); break;
-                case 'Semanal':   $fechaVencimiento = $fechaInicio->copy()->addWeeks($i); break;
-                case 'Quincenal': $fechaVencimiento = $fechaInicio->copy()->addWeeks($i * 2 - 1); break;
-                case 'Mensual':   $fechaVencimiento = $fechaInicio->copy()->addMonths($i); break;
-                case 'Anual':     $fechaVencimiento = $fechaInicio->copy()->addYears($i); break;
-            }
-
-            $pago->fecha_pago      = $fechaVencimiento;
-            $pago->metodo_pago     = "Efectivo";
-            $pago->referencia_pago = "Pago de la cuota " . $i;
-            $pago->estado          = "Pendiente";
-            $pago->save();
-        }
-
-        $usuario = auth()->user();
-
-        if ($usuario->hasRole(['ADMINISTRADOR', 'SUPERVISOR', 'PRESTAMISTA'])) {
-            $capitalPrestamista = CapitalPrestamista::firstOrCreate(['user_id' => $usuario->id]);
-
-            if ($capitalPrestamista->monto_disponible < $request->monto_prestado) {
-                session()->flash('mensaje', '⚠️ No tienes suficiente capital disponible, pero el préstamo fue registrado correctamente.');
-                session()->flash('icono', 'warning');
-            }
-
-            $capitalPrestamista->monto_disponible -= $request->monto_prestado;
-            $capitalPrestamista->monto_asignado   -= $request->monto_prestado;
-            $capitalPrestamista->save();
-
-            MovimientoCapitalPrestamista::create([
-                'user_id'     => $usuario->id,
-                'monto'       => $request->monto_prestado,
-                'descripcion' => 'Préstamo realizado ID ' . $prestamo->id,
-            ]);
-        }
-
-        return redirect()->route('admin.prestamos.index')
-            ->with('mensaje', 'Se registró el préstamo correctamente')
-            ->with('icono', 'success');
+    // Asegura que exista registro de capital de empresa
+    $empresaExiste = EmpresaCapital::latest('id')->first();
+    if (!$empresaExiste) {
+        return back()->withInput()
+            ->with('mensaje', 'Debes crear primero el registro de capital de empresa.')
+            ->with('icono', 'error');
     }
+
+    try {
+        DB::transaction(function () use ($request, $ownerId, $montoSolicitado) {
+
+            // Bloquear filas involucradas
+            $cp = CapitalPrestamista::query()
+                ->lockForUpdate()
+                ->firstOrCreate(['user_id' => $ownerId], [
+                    'monto_asignado'   => 0,
+                    'monto_disponible' => 0,
+                ]);
+
+            $empresa = EmpresaCapital::query()
+                ->lockForUpdate()
+                ->latest('id')
+                ->firstOrFail();
+
+            $saldoAsesores = (int) ($empresa->capital_asignado_total ?? 0);
+
+            // 1) Primero usar saldo de asesores (disminuye capital_asignado_total)
+            if ($saldoAsesores > 0) {
+                $aTransferir = min($montoSolicitado, $saldoAsesores);
+
+                $empresa->capital_anterior       = (int) $saldoAsesores;          // guarda el anterior del campo que modificas
+                $empresa->capital_asignado_total = $saldoAsesores - $aTransferir; // ↓
+                $empresa->save();
+
+                $cp->monto_disponible = (int) $cp->monto_disponible + $aTransferir; // ↑
+                $cp->save();
+
+                RegistroCapital::create([
+                    'monto'       => -(int) $aTransferir,
+                    'user_id'     => $ownerId,
+                    'tipo_accion' => 'Traspaso desde saldo de asesores al prestamista #' . $ownerId . ' (para préstamo)',
+                ]);
+
+                if (class_exists(MovimientoCapitalPrestamista::class)) {
+                    MovimientoCapitalPrestamista::create([
+                        'user_id'     => $ownerId,
+                        'monto'       => $aTransferir,
+                        'descripcion' => 'Traspaso desde saldo de asesores',
+                    ]);
+                }
+            }
+
+            // 2) Si aun así no alcanza, lanza una excepción controlada
+            if ((int) $cp->monto_disponible < $montoSolicitado) {
+                throw new \DomainException('__NO_CAPITAL__');
+            }
+
+            // 3) Crear préstamo
+            $prestamo = new Prestamo();
+            $prestamo->cliente_id     = (int) $request->cliente_id;
+            $prestamo->monto_prestado = $montoSolicitado;
+            $prestamo->tasa_interes   = $request->tasa_interes;
+            $prestamo->modalidad      = $request->modalidad;
+            $prestamo->nro_cuotas     = (int) $request->nro_cuotas;
+            $prestamo->fecha_inicio   = $request->fecha_inicio;
+            $prestamo->monto_total    = (int) $request->monto_total;
+            $prestamo->idusuario      = $ownerId;
+            $prestamo->save();
+
+            // 4) Cronograma
+            for ($i = 1; $i <= (int) $request->nro_cuotas; $i++) {
+                $pago = new Pago();
+                $pago->prestamo_id  = $prestamo->id;
+                $pago->monto_pagado = (int) $request->monto_cuota;
+
+                $fechaInicio = \Carbon\Carbon::parse($request->fecha_inicio);
+                switch ($request->modalidad) {
+                    case 'Diario':    $fechaVencimiento = $fechaInicio->copy()->addDays($i); break;
+                    case 'Semanal':   $fechaVencimiento = $fechaInicio->copy()->addWeeks($i); break;
+                    case 'Quincenal': $fechaVencimiento = $fechaInicio->copy()->addWeeks($i * 2 - 1); break;
+                    case 'Mensual':   $fechaVencimiento = $fechaInicio->copy()->addMonths($i); break;
+                    case 'Anual':     $fechaVencimiento = $fechaInicio->copy()->addYears($i); break;
+                }
+
+                $pago->fecha_pago      = $fechaVencimiento;
+                $pago->metodo_pago     = 'Efectivo';
+                $pago->referencia_pago = 'Pago de la cuota ' . $i;
+                $pago->estado          = 'Pendiente';
+                $pago->save();
+            }
+
+            // 5) Descontar capital del prestamista (disponible y, si aplica, asignado)
+            $asignadoAntes = (int) $cp->monto_asignado;
+            $cp->monto_disponible = max(0, (int) $cp->monto_disponible - $montoSolicitado);
+            $cp->monto_asignado   = max(0, $asignadoAntes - min($montoSolicitado, $asignadoAntes));
+            $cp->save();
+
+            if (class_exists(MovimientoCapitalPrestamista::class)) {
+                MovimientoCapitalPrestamista::create([
+                    'user_id'     => $ownerId,
+                    'monto'       => $montoSolicitado,
+                    'descripcion' => 'Préstamo realizado ID ' . $prestamo->id,
+                ]);
+            }
+        }, 3);
+    } catch (\DomainException $e) {
+        if ($e->getMessage() === '__NO_CAPITAL__') {
+            return back()
+                ->withInput()
+                ->with('mensaje', '❌ No hay capital asignado suficiente para realizar este préstamo para el prestamista seleccionado.')
+                ->with('icono', 'error');
+        }
+        throw $e; // otras DomainException no esperadas
+    }
+
+    return redirect()->route('admin.prestamos.index')
+        ->with('mensaje', 'Se registró el préstamo correctamente')
+        ->with('icono', 'success');
+}
+
 
     public function edit($id)
     {
@@ -136,14 +208,20 @@ class PrestamoController extends Controller
 
     public function update(Request $request, $id)
     {
+        // Normalizar montos
+        $request->merge([
+            'monto_prestado' => str_replace(['.', ','], '', $request->monto_prestado),
+            'monto_total'    => str_replace(['.', ','], '', $request->monto_total),
+        ]);
+
         $request->validate([
             'cliente_id'     => 'required',
-            'monto_prestado' => 'required',
-            'tasa_interes'   => 'required',
-            'modalidad'      => 'required',
-            'nro_cuotas'     => 'required',
-            'fecha_inicio'   => 'required',
-            'monto_total'    => 'required',
+            'monto_prestado' => 'required|numeric|min:1',
+            'tasa_interes'   => 'required|numeric',
+            'modalidad'      => 'required|in:Diario,Semanal,Quincenal,Mensual,Anual',
+            'nro_cuotas'     => 'required|integer|min:1',
+            'fecha_inicio'   => 'required|date',
+            'monto_total'    => 'required|numeric|min:1',
         ]);
 
         $prestamo = Prestamo::findOrFail($id);
@@ -155,13 +233,13 @@ class PrestamoController extends Controller
         }
 
         $prestamo->update([
-            'cliente_id'     => $request->cliente_id,
-            'monto_prestado' => $request->monto_prestado,
+            'cliente_id'     => (int) $request->cliente_id,
+            'monto_prestado' => (int) $request->monto_prestado,
             'tasa_interes'   => $request->tasa_interes,
             'modalidad'      => $request->modalidad,
-            'nro_cuotas'     => $request->nro_cuotas,
+            'nro_cuotas'     => (int) $request->nro_cuotas,
             'fecha_inicio'   => $request->fecha_inicio,
-            'monto_total'    => $request->monto_total,
+            'monto_total'    => (int) $request->monto_total,
         ]);
 
         return redirect()->route('admin.prestamos.index')
@@ -218,12 +296,6 @@ class PrestamoController extends Controller
 
     /**
      * RETANQUEO
-     * - Calcula saldo pendiente con el mismo criterio de la pantalla:
-     *   cuotas confirmadas + abonos de cuotas pendientes (tope al valor de la cuota).
-     * - Valida que el principal nuevo cubra ese saldo.
-     * - Liquida el préstamo actual y crea uno nuevo con el cronograma.
-     * - Descuenta del CAPITAL ASIGNADO TOTAL el NETO entregado al cliente
-     *   (principal_nuevo - saldo_pendiente) y registra el movimiento.
      */
     public function retanqueo(Request $request, Prestamo $prestamo)
     {
@@ -235,7 +307,6 @@ class PrestamoController extends Controller
             'observaciones'   => ['nullable', 'string', 'max:500'],
         ]);
 
-        // 1) Saldo pendiente (consistente con UI)
         $saldoPendiente = $this->calcularSaldoPendiente($prestamo);
 
         if ((float) $data['principal_nuevo'] < $saldoPendiente) {
@@ -244,12 +315,10 @@ class PrestamoController extends Controller
                 ->with('icono', 'error');
         }
 
-        // 2) Neto a entregar al cliente
         $netoEntregar = max(0, (float)$data['principal_nuevo'] - (float)$saldoPendiente);
 
         $nuevoPrestamo = DB::transaction(function () use ($prestamo, $data, $saldoPendiente, $netoEntregar) {
 
-            // 2.1) Liquidar préstamo actual (confirmar cuotas pendientes)
             Pago::where('prestamo_id', $prestamo->id)
                 ->where('estado', '!=', 'Confirmado')
                 ->update([
@@ -260,7 +329,6 @@ class PrestamoController extends Controller
             $prestamo->estado = 'Cancelado';
             $prestamo->save();
 
-            // 2.2) Crear nuevo préstamo
             $nuevo = new Prestamo();
             $nuevo->cliente_id     = $prestamo->cliente_id;
             $nuevo->idusuario      = auth()->id() ?? $prestamo->idusuario;
@@ -273,7 +341,6 @@ class PrestamoController extends Controller
             $nuevo->estado         = 'Pendiente';
             $nuevo->save();
 
-            // 2.3) Cronograma del nuevo préstamo
             $montoCuota = round($nuevo->monto_total / max(1, $nuevo->nro_cuotas), 2);
             $inicio     = Carbon::parse($nuevo->fecha_inicio);
 
@@ -296,7 +363,6 @@ class PrestamoController extends Controller
                 $pago->save();
             }
 
-            // 2.4) Movimiento de CAPITAL ASIGNADO TOTAL por el desembolso neto
             if ($netoEntregar > 0) {
                 $empresa = EmpresaCapital::query()->lockForUpdate()->latest('id')->first();
                 if ($empresa) {
@@ -342,13 +408,12 @@ class PrestamoController extends Controller
             $porNro[$i+1] = ['estado' => $p->estado, 'monto' => (float)$p->monto_pagado];
         }
 
-        // Abonos por cuota
+        // Abonos por cuota (cap al valor de la cuota y solo de cuotas pendientes)
         $abonosPorCuota = Abono::where('prestamo_id', $prestamo->id)
             ->selectRaw('nro_cuota, SUM(COALESCE(monto, monto_abonado, 0)) as total')
             ->groupBy('nro_cuota')
             ->pluck('total', 'nro_cuota');
 
-        // Sumar SOLO abonos de cuotas PENDIENTES (tope al valor de la cuota)
         $abonosPendientes = 0.0;
         foreach ($abonosPorCuota as $nro => $total) {
             $estado = $porNro[$nro]['estado'] ?? 'Pendiente';

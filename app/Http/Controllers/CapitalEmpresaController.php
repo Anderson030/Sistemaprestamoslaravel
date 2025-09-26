@@ -22,6 +22,7 @@ class CapitalEmpresaController extends Controller
         [$dineroCirculando, $prestamosActivos] = $this->calcularCirculando();
 
         // Capital asignado total = asignado a prestamistas + saldo asesores (cobros/abonos no pasados a caja)
+        // PROTEGIDO: nunca negativo
         $capitalAsignadoTotal = $this->calcularCapitalAsignadoTotal($capital);
 
         // Total general = Caja + Circulando + Capital asignado total
@@ -102,11 +103,11 @@ class CapitalEmpresaController extends Controller
         return [$dineroCirculando, $prestamosActivos];
     }
 
-    /** Suma (asignado a prestamistas) + (saldo asesores/ruta no pasado a caja). */
+    /** Suma (asignado a prestamistas) + (saldo asesores/ruta no pasado a caja) — clamp a 0. */
     private function calcularCapitalAsignadoTotal(?EmpresaCapital $empresa): int
     {
-        $asignadoPrestamistas = (int) CapitalPrestamista::sum('monto_asignado');
-        $saldoAsesoresRuta    = (int) ($empresa->capital_asignado_total ?? 0);
+        $asignadoPrestamistas = max(0, (int) CapitalPrestamista::sum('monto_asignado'));
+        $saldoAsesoresRuta    = max(0, (int) ($empresa->capital_asignado_total ?? 0));
         return $asignadoPrestamistas + $saldoAsesoresRuta;
     }
 
@@ -121,14 +122,14 @@ class CapitalEmpresaController extends Controller
         DB::beginTransaction();
         try {
             $capital = EmpresaCapital::create([
-                'capital_total'          => $request->capital_total,
-                'capital_disponible'     => $request->capital_total,
-                'capital_anterior'       => $request->capital_total,
+                'capital_total'          => (int) $request->capital_total,
+                'capital_disponible'     => (int) $request->capital_total,
+                'capital_anterior'       => (int) $request->capital_total,
                 'capital_asignado_total' => 0,
             ]);
 
             RegistroCapital::create([
-                'monto'       => $request->capital_total,
+                'monto'       => (int) $request->capital_total,
                 'user_id'     => auth()->id(),
                 'tipo_accion' => 'Capital total inicial registrado',
             ]);
@@ -149,15 +150,15 @@ class CapitalEmpresaController extends Controller
 
         DB::beginTransaction();
         try {
-            $capital = EmpresaCapital::latest()->first();
+            $capital = EmpresaCapital::query()->lockForUpdate()->latest('id')->firstOrFail();
 
-            $capital->capital_anterior    = $capital->capital_disponible;
-            $capital->capital_total      += $request->monto;
-            $capital->capital_disponible += $request->monto;
+            $capital->capital_anterior    = (int) $capital->capital_disponible;
+            $capital->capital_total      += (int) $request->monto;
+            $capital->capital_disponible += (int) $request->monto;
             $capital->save();
 
             RegistroCapital::create([
-                'monto'       => $request->monto,
+                'monto'       => (int) $request->monto,
                 'user_id'     => auth()->id(),
                 'tipo_accion' => 'Capital adicional agregado',
             ]);
@@ -173,8 +174,6 @@ class CapitalEmpresaController extends Controller
     // Asignar capital a prestamistas (resta de caja y lo deja “afuera” con el asesor)
     public function asignar(Request $request)
     {
-        $capital = EmpresaCapital::latest()->first();
-
         $montoCrudo = $request->montos[$request->asignar_id] ?? 0;
         $monto = (int) str_replace(['.', ','], '', $montoCrudo);
 
@@ -185,27 +184,29 @@ class CapitalEmpresaController extends Controller
             return back()->with('error', 'Debe ingresar un monto válido para asignar.');
         }
 
-        if ($monto > ($capital->capital_disponible ?? 0)) {
-            return back()->with('error', 'El monto excede el capital disponible.');
-        }
-
-        // Si el campo "confirmar" viene explícito y es falso, cancelar
         if ($confirmar === false) {
             return back()->with('info', '🛑 Operación cancelada por el usuario.');
         }
 
         DB::beginTransaction();
         try {
+            $capital = EmpresaCapital::query()->lockForUpdate()->latest('id')->firstOrFail();
+
+            if ($monto > (int) ($capital->capital_disponible ?? 0)) {
+                DB::rollBack();
+                return back()->with('error', 'El monto excede el capital disponible.');
+            }
+
             $capitalPrestamista = CapitalPrestamista::firstOrCreate([
                 'user_id' => $request->asignar_id,
             ]);
 
-            $capitalPrestamista->monto_asignado   += $monto;
-            $capitalPrestamista->monto_disponible += $monto; // si manejas “disponible”
+            $capitalPrestamista->monto_asignado   = max(0, (int) $capitalPrestamista->monto_asignado) + $monto;
+            $capitalPrestamista->monto_disponible = max(0, (int) $capitalPrestamista->monto_disponible) + $monto; // si manejas “disponible”
             $capitalPrestamista->save();
 
-            $capital->capital_anterior    = $capital->capital_disponible;
-            $capital->capital_disponible -= $monto;
+            $capital->capital_anterior    = (int) $capital->capital_disponible;
+            $capital->capital_disponible  = (int) $capital->capital_disponible - $monto;
             $capital->save();
 
             $prestamista = User::find($request->asignar_id);
@@ -242,22 +243,20 @@ class CapitalEmpresaController extends Controller
                 return back()->with('error', 'No hay registro de capital de empresa.');
             }
 
-            $saldoAbonos = (int) ($empresa->capital_asignado_total ?? 0);
-            if ($monto > $saldoAbonos) {
-                $monto = $saldoAbonos;
-            }
+            $saldoAbonos = max(0, (int) ($empresa->capital_asignado_total ?? 0));
+            $m = min($monto, $saldoAbonos);
 
-            if ($monto <= 0) {
+            if ($m <= 0) {
                 return back()->with('info', 'No hay saldo para transferir.');
             }
 
-            $empresa->capital_anterior       = $empresa->capital_disponible;
-            $empresa->capital_asignado_total = $saldoAbonos - $monto;
-            $empresa->capital_disponible     = (int) $empresa->capital_disponible + $monto;
+            $empresa->capital_anterior       = (int) $empresa->capital_disponible;
+            $empresa->capital_asignado_total = max(0, $saldoAbonos - $m);
+            $empresa->capital_disponible     = (int) $empresa->capital_disponible + $m;
             $empresa->save();
 
             RegistroCapital::create([
-                'monto'       => (int) $monto,
+                'monto'       => (int) $m,
                 'user_id'     => auth()->id(),
                 'tipo_accion' => 'Traslado de abonos a Caja',
             ]);
@@ -278,8 +277,8 @@ class CapitalEmpresaController extends Controller
         return DB::transaction(function () {
             $empresa = EmpresaCapital::query()->lockForUpdate()->latest('id')->firstOrFail();
 
-            $saldoAsesores   = (int) ($empresa->capital_asignado_total ?? 0);
-            $asignadoFuera   = (int) CapitalPrestamista::sum('monto_asignado');
+            $saldoAsesores    = max(0, (int) ($empresa->capital_asignado_total ?? 0));
+            $asignadoFuera    = max(0, (int) CapitalPrestamista::sum('monto_asignado'));
             $totalATransferir = $saldoAsesores + $asignadoFuera;
 
             if ($totalATransferir <= 0) {
@@ -300,7 +299,7 @@ class CapitalEmpresaController extends Controller
             }
 
             RegistroCapital::create([
-                'monto'       => $totalATransferir,
+                'monto'       => (int) $totalATransferir,
                 'user_id'     => auth()->id(),
                 'tipo_accion' => 'Traslado de Capital asignado total a Caja (abonos + asignaciones)',
             ]);
@@ -317,14 +316,14 @@ class CapitalEmpresaController extends Controller
     {
         return DB::transaction(function () use ($request) {
 
-            $totalAsignado = (int) CapitalPrestamista::sum('monto_asignado');
+            $totalAsignado = max(0, (int) CapitalPrestamista::sum('monto_asignado'));
             if ($totalAsignado <= 0) {
                 return back()->with('warning', 'No hay capital asignado para devolver.');
             }
 
             $empresa = EmpresaCapital::query()->lockForUpdate()->latest('id')->firstOrFail();
 
-            $empresa->capital_anterior   = $empresa->capital_disponible;
+            $empresa->capital_anterior   = (int) $empresa->capital_disponible;
             $empresa->capital_disponible = (int) $empresa->capital_disponible + $totalAsignado;
             $empresa->save();
 
@@ -334,7 +333,7 @@ class CapitalEmpresaController extends Controller
             ]);
 
             RegistroCapital::create([
-                'monto'       => $totalAsignado,
+                'monto'       => (int) $totalAsignado,
                 'user_id'     => $request->user()->id ?? auth()->id(),
                 'tipo_accion' => 'Capital devuelto desde asignaciones',
             ]);

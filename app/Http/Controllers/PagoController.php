@@ -9,6 +9,8 @@ use App\Models\Prestamo;
 use App\Models\EmpresaCapital;
 use App\Models\RegistroCapital;
 use App\Models\Abono; // Para calcular abonos por cuota
+use App\Models\CapitalPrestamista;
+use App\Models\MovimientoCapitalPrestamista;
 use Illuminate\Http\Request;
 use Barryvdh\DomPDF\Facade\Pdf;
 use Illuminate\Support\Facades\DB;
@@ -18,7 +20,29 @@ class PagoController extends Controller
     public function index()
     {
         $clientes = Cliente::all();
-        $pagos = Pago::all();
+
+        // Trae todos los pagos y calcula: monto_real_pagado y flag de pago parcial
+        $pagos = Pago::orderBy('id', 'desc')->get();
+        foreach ($pagos as $p) {
+            // nro de cuota dentro del préstamo
+            $nroCuota = $this->resolverNroCuota($p);
+
+            // Total abonado previamente a esa cuota
+            $abonosCuota = (int) Abono::where('prestamo_id', $p->prestamo_id)
+                ->where('nro_cuota', $nroCuota)
+                ->sum(DB::raw('COALESCE(monto, monto_abonado, 0)'));
+
+            // Lo que realmente entró al confirmar la cuota
+            // (si aún está pendiente, lo dejamos en 0 para que la vista decida)
+            $p->monto_real_pagado = $p->estado === 'Confirmado'
+                ? max(0, (int) $p->monto_pagado - $abonosCuota)
+                : 0;
+
+            // Marca si esta cuota tuvo abonos antes del pago
+            $p->es_pago_parcial = $abonosCuota > 0;
+            $p->nro_cuota_calc  = $nroCuota; // por si lo quieres mostrar en la tabla
+        }
+
         return view('admin.pagos.index', compact('pagos', 'clientes'));
     }
 
@@ -88,9 +112,9 @@ class PagoController extends Controller
     /**
      * Confirma un pago (por id de pago).
      * - Marca la cuota como Confirmado.
-     * - Suma el IMPORTE NETO al "Saldo disponible total de los asesores"
-     *   (empresa.capital_asignado_total) => cuota - abonos de esa cuota.
-     * - Registra en registro_capital.
+     * - Suma el IMPORTE NETO al saldo de asesores (empresa.capital_asignado_total).
+     * - Acredita ese NETO al capital del PRESTAMISTA dueño del préstamo (monto_disponible).
+     * - Registra en registro_capital y (opcional) movimiento del prestamista.
      */
     public function store($id)
     {
@@ -123,11 +147,36 @@ class PagoController extends Controller
             $empresa = EmpresaCapital::query()->lockForUpdate()->latest('id')->first();
             if ($empresa && $neto > 0) {
                 $empresa->capital_anterior       = (int) ($empresa->capital_asignado_total ?? 0);
-                $empresa->capital_asignado_total = (int) ($empresa->capital_asignado_total ?? 0) + $neto;
+                $empresa->capital_asignado_total = max(0, (int) ($empresa->capital_asignado_total ?? 0)) + $neto;
                 $empresa->save();
             }
 
-            // 4) Log de movimiento
+            // 3.b) Acreditar NETO al PRESTAMISTA dueño del préstamo (para que pueda volver a prestar)
+            $prestamo = Prestamo::find($pago->prestamo_id);
+            $ownerId  = $prestamo->idusuario ?? auth()->id();
+
+            if ($neto > 0 && $ownerId) {
+                $cp = CapitalPrestamista::query()
+                    ->lockForUpdate()
+                    ->firstOrCreate(['user_id' => $ownerId], [
+                        'monto_asignado' => 0,
+                        'monto_disponible' => 0,
+                    ]);
+
+                $cp->monto_disponible = (int) $cp->monto_disponible + (int) $neto;
+                $cp->save();
+
+                // (Opcional) Log del prestamista
+                if (class_exists(MovimientoCapitalPrestamista::class)) {
+                    MovimientoCapitalPrestamista::create([
+                        'user_id'     => $ownerId,
+                        'monto'       => (int) $neto,
+                        'descripcion' => 'Cobro de cuota (neto) préstamo #' . $pago->prestamo_id,
+                    ]);
+                }
+            }
+
+            // 4) Log de movimiento general
             RegistroCapital::create([
                 'monto'       => (int) $neto,
                 'user_id'     => auth()->id(),
@@ -149,7 +198,7 @@ class PagoController extends Controller
         });
 
         return redirect()->back()
-            ->with('mensaje', 'Pago registrado (acumulado en Saldo de asesores por el neto).')
+            ->with('mensaje', 'Pago registrado (neto sumado a saldo de asesores y al capital del prestamista).')
             ->with('icono', 'success');
     }
 
@@ -203,8 +252,8 @@ class PagoController extends Controller
     /**
      * Revierte la confirmación de un pago:
      * - Resta del SALDO DE ASESORES el MISMO NETO que se sumó.
-     * - Deja el pago como Pendiente.
-     * - Deja traza en registro_capital.
+     * - Resta ese NETO del capital del PRESTAMISTA dueño del préstamo.
+     * - Deja el pago como Pendiente y registra trazas.
      */
     public function destroy($id)
     {
@@ -222,18 +271,40 @@ class PagoController extends Controller
                 $montoCuota = (int) $pago->monto_pagado;
                 $neto = max(0, $montoCuota - $abonosCuota);
 
+                // Empresa (saldo asesores)
                 $empresa = EmpresaCapital::query()->lockForUpdate()->latest('id')->first();
                 if ($empresa && $neto > 0) {
                     $empresa->capital_anterior       = (int) ($empresa->capital_asignado_total ?? 0);
-                    $empresa->capital_asignado_total = (int) ($empresa->capital_asignado_total ?? 0) - $neto;
-                    if ($empresa->capital_asignado_total < 0) {
-                        $empresa->capital_asignado_total = 0; // por seguridad
-                    }
+                    $empresa->capital_asignado_total = max(0, (int) ($empresa->capital_asignado_total ?? 0) - $neto);
                     $empresa->save();
                 }
 
+                // Prestamista dueño del préstamo
+                $prestamo = Prestamo::find($pago->prestamo_id);
+                $ownerId  = $prestamo->idusuario ?? auth()->id();
+
+                if ($neto > 0 && $ownerId) {
+                    $cp = CapitalPrestamista::query()
+                        ->lockForUpdate()
+                        ->firstOrCreate(['user_id' => $ownerId], [
+                            'monto_asignado' => 0,
+                            'monto_disponible' => 0,
+                        ]);
+
+                    $cp->monto_disponible = max(0, (int) $cp->monto_disponible - (int) $neto);
+                    $cp->save();
+
+                    if (class_exists(MovimientoCapitalPrestamista::class)) {
+                        MovimientoCapitalPrestamista::create([
+                            'user_id'     => $ownerId,
+                            'monto'       => -(int) $neto,
+                            'descripcion' => 'Reverso de cobro (neto) préstamo #' . $pago->prestamo_id,
+                        ]);
+                    }
+                }
+
                 RegistroCapital::create([
-                    'monto'       => (int) $neto * -1,
+                    'monto'       => (int) ($neto * -1),
                     'user_id'     => auth()->id(),
                     'tipo_accion' => 'Reverso de cuota (neto) desde saldo asesores (préstamo #' . $pago->prestamo_id . ', cuota ' . $nroCuota . ')',
                 ]);
