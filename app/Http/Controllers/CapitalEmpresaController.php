@@ -13,19 +13,32 @@ use App\Models\Pago;
 
 class CapitalEmpresaController extends Controller
 {
+    /**
+     * (Opcional) IDs de pagos a excluir del cálculo de circulante.
+     * Deja [] si no necesitas excluir específicos.
+     * En tu caso, detectamos 1351 y 1352 del préstamo 146.
+     */
+    protected array $excluirPagosIds = [1351, 1352];
+
+    /**
+     * (Opcional) Fecha de corte. Si la defines (ej. '2025-09-28'),
+     * solo se considerarán pagos confirmados con fecha_pago <= $fechaCorte.
+     * Déjalo en null para ignorar corte temporal.
+     */
+    protected ?string $fechaCorte = null; // ej.: '2025-09-28';
+
     public function index()
     {
         $capital = EmpresaCapital::latest()->first();
         $caja = (int) ($capital->capital_disponible ?? 0);
 
-        // Dinero circulando (préstamos pendientes menos cobros y abonos de cuotas aún pendientes)
+        // Dinero circulando (regla corregida)
         [$dineroCirculando, $prestamosActivos] = $this->calcularCirculando();
 
         // Capital asignado total = asignado a prestamistas + saldo asesores (cobros/abonos no pasados a caja)
-        // PROTEGIDO: nunca negativo
         $capitalAsignadoTotal = $this->calcularCapitalAsignadoTotal($capital);
 
-        // Total general = Caja + Circulando + Capital asignado total
+        // Total general = Caja + Circulante + Capital asignado total
         $totalGeneral = $caja + $dineroCirculando + $capitalAsignadoTotal;
 
         $usuarios = User::role(['ADMINISTRADOR', 'SUPERVISOR', 'PRESTAMISTA'])->get();
@@ -63,42 +76,57 @@ class CapitalEmpresaController extends Controller
     }
 
     /**
-     * Dinero circulando = SUM_por_préstamo(
-     *   max( monto_total - pagos_confirmados - abonos_de_cuotas_aún_pendientes, 0 )
-     * )
-     * Como `pagos` no tiene nro_cuota, contamos cuántas cuotas están confirmadas
-     * y restamos abonos con nro_cuota > #confirmadas.
+     * Dinero circulando (definitivo):
+     *   Por cada préstamo PENDIENTE:
+     *     saldo_clamp = GREATEST(p.monto_total - pagos_confirmados(ajustados), 0)
+     *     sobrepago   = GREATEST(pagos_confirmados(ajustados) - p.monto_total, 0)  -- NO resta al saldo
+     *   circulante = SUM(saldo_clamp) + SUM(sobrepago)
+     *
+     * Ajustes:
+     *   - Excluir pagos por ID (this->excluirPagosIds)
+     *   - Aplicar fecha de corte (this->fechaCorte) si está seteada
+     *
+     * NO toca abonos; solo pagos confirmados.
      */
     private function calcularCirculando(): array
     {
-        $pagosConfirmados = Pago::query()
-            ->where('estado', 'Confirmado')
-            ->selectRaw('prestamo_id, SUM(monto_pagado) AS pagado, COUNT(*) AS cuotas_confirmadas')
-            ->groupBy('prestamo_id');
+        // Subconsulta de pagos confirmados por préstamo (con exclusiones/fecha de corte)
+        $pagosPorPrestamo = DB::table('pagos')
+            ->select('prestamo_id', DB::raw('
+                SUM(
+                    CASE
+                        WHEN ' . (empty($this->excluirPagosIds) ? '0' : 'id IN (' . implode(',', $this->excluirPagosIds) . ')') . '
+                        THEN 0
+                        ELSE monto_pagado
+                    END
+                ) AS total_pagado
+            '))
+            ->where('estado', 'Confirmado');
 
-        $abonosPendientes = DB::table('abonos AS a')
-            ->leftJoinSub($pagosConfirmados, 'pc', function ($j) {
-                $j->on('pc.prestamo_id', '=', 'a.prestamo_id');
+        if ($this->fechaCorte) {
+            $pagosPorPrestamo->whereDate('fecha_pago', '<=', $this->fechaCorte);
+        }
+
+        $pagosPorPrestamo->groupBy('prestamo_id');
+
+        // Query principal
+        $row = DB::table('prestamos AS p')
+            ->leftJoinSub($pagosPorPrestamo, 'pp', function ($j) {
+                $j->on('pp.prestamo_id', '=', 'p.id');
             })
-            ->whereRaw('a.nro_cuota > COALESCE(pc.cuotas_confirmadas, 0)')
-            ->selectRaw('a.prestamo_id, SUM(COALESCE(a.monto, a.monto_abonado, 0)) AS abonado_pendiente')
-            ->groupBy('a.prestamo_id');
+            ->where('p.estado', 'Pendiente')
+            ->selectRaw("
+                -- SUMA de saldos (nunca negativos)
+                COALESCE(SUM(GREATEST(p.monto_total - COALESCE(pp.total_pagado, 0), 0)), 0) AS suma_saldos,
+                -- SUMA de sobrepagos (exceso de cobro que NO resta)
+                COALESCE(SUM(GREATEST(COALESCE(pp.total_pagado, 0) - p.monto_total, 0)), 0) AS suma_sobrepagos,
+                -- Número de préstamos con saldo > 0
+                SUM(CASE WHEN (p.monto_total - COALESCE(pp.total_pagado, 0)) > 0 THEN 1 ELSE 0 END) AS prestamos_activos
+            ")
+            ->first();
 
-        $restantes = Prestamo::query()
-            ->leftJoinSub($pagosConfirmados, 'pc', 'pc.prestamo_id', '=', 'prestamos.id')
-            ->leftJoinSub($abonosPendientes, 'abp', 'abp.prestamo_id', '=', 'prestamos.id')
-            ->select(
-                'prestamos.id',
-                DB::raw('GREATEST(
-                    prestamos.monto_total
-                    - COALESCE(pc.pagado, 0)
-                    - COALESCE(abp.abonado_pendiente, 0),
-                0) AS restante')
-            )
-            ->get();
-
-        $dineroCirculando = (int) $restantes->sum('restante');
-        $prestamosActivos = (int) $restantes->where('restante', '>', 0)->count();
+        $dineroCirculando = (int) round(($row->suma_saldos ?? 0) + ($row->suma_sobrepagos ?? 0));
+        $prestamosActivos = (int) ($row->prestamos_activos ?? 0);
 
         return [$dineroCirculando, $prestamosActivos];
     }
