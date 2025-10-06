@@ -171,7 +171,7 @@
         document.getElementById('form-reiniciar-totales').addEventListener('submit', function (e) {
             e.preventDefault();
             const clave = prompt('Ingresa la clave para reiniciar los totales:');
-            if (clave === 'Emiluna24') {
+            if (clave === '123') {
                 this.submit();
             } else {
                 alert('❌ Clave incorrecta. No se reiniciaron los totales.');
