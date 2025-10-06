@@ -9,33 +9,18 @@ use App\Models\RegistroCapital;
 use App\Models\CapitalPrestamista;
 use App\Models\User;
 use App\Models\Prestamo;
-use App\Models\Pago;
 
 class CapitalEmpresaController extends Controller
 {
-    /**
-     * (Opcional) IDs de pagos a excluir del cálculo de circulante.
-     * Deja [] si no necesitas excluir específicos.
-     * En tu caso, detectamos 1351 y 1352 del préstamo 146.
-     */
-    protected array $excluirPagosIds = [1351, 1352];
-
-    /**
-     * (Opcional) Fecha de corte. Si la defines (ej. '2025-09-28'),
-     * solo se considerarán pagos confirmados con fecha_pago <= $fechaCorte.
-     * Déjalo en null para ignorar corte temporal.
-     */
-    protected ?string $fechaCorte = null; // ej.: '2025-09-28';
-
     public function index()
     {
         $capital = EmpresaCapital::latest()->first();
         $caja = (int) ($capital->capital_disponible ?? 0);
 
-        // Dinero circulando (regla corregida)
+        // Dinero circulando (definición final: capital activo en la calle)
         [$dineroCirculando, $prestamosActivos] = $this->calcularCirculando();
 
-        // Capital asignado total = asignado a prestamistas + saldo asesores (cobros/abonos no pasados a caja)
+        // Capital asignado total = asignado a prestamistas + saldo asesores/ruta
         $capitalAsignadoTotal = $this->calcularCapitalAsignadoTotal($capital);
 
         // Total general = Caja + Circulante + Capital asignado total
@@ -51,7 +36,7 @@ class CapitalEmpresaController extends Controller
             'totalGeneral'                => $totalGeneral,
             'prestamosActivos'            => $prestamosActivos,
             'capitalAsignadoTotal'        => $capitalAsignadoTotal,
-            'capitalAsignadoPrestamistas' => $capitalAsignadoTotal, // alias si tu vista lo usa
+            'capitalAsignadoPrestamistas' => $capitalAsignadoTotal, // alias por compatibilidad de vista
         ]);
     }
 
@@ -77,55 +62,17 @@ class CapitalEmpresaController extends Controller
 
     /**
      * Dinero circulando (definitivo):
-     *   Por cada préstamo PENDIENTE:
-     *     saldo_clamp = GREATEST(p.monto_total - pagos_confirmados(ajustados), 0)
-     *     sobrepago   = GREATEST(pagos_confirmados(ajustados) - p.monto_total, 0)  -- NO resta al saldo
-     *   circulante = SUM(saldo_clamp) + SUM(sobrepago)
-     *
-     * Ajustes:
-     *   - Excluir pagos por ID (this->excluirPagosIds)
-     *   - Aplicar fecha de corte (this->fechaCorte) si está seteada
-     *
-     * NO toca abonos; solo pagos confirmados.
+     *   suma de p.monto_prestado de todos los préstamos con estado = 'Pendiente'
+     *   + conteo de préstamos activos (para mostrar en tarjeta).
      */
     private function calcularCirculando(): array
     {
-        // Subconsulta de pagos confirmados por préstamo (con exclusiones/fecha de corte)
-        $pagosPorPrestamo = DB::table('pagos')
-            ->select('prestamo_id', DB::raw('
-                SUM(
-                    CASE
-                        WHEN ' . (empty($this->excluirPagosIds) ? '0' : 'id IN (' . implode(',', $this->excluirPagosIds) . ')') . '
-                        THEN 0
-                        ELSE monto_pagado
-                    END
-                ) AS total_pagado
-            '))
-            ->where('estado', 'Confirmado');
-
-        if ($this->fechaCorte) {
-            $pagosPorPrestamo->whereDate('fecha_pago', '<=', $this->fechaCorte);
-        }
-
-        $pagosPorPrestamo->groupBy('prestamo_id');
-
-        // Query principal
-        $row = DB::table('prestamos AS p')
-            ->leftJoinSub($pagosPorPrestamo, 'pp', function ($j) {
-                $j->on('pp.prestamo_id', '=', 'p.id');
-            })
-            ->where('p.estado', 'Pendiente')
-            ->selectRaw("
-                -- SUMA de saldos (nunca negativos)
-                COALESCE(SUM(GREATEST(p.monto_total - COALESCE(pp.total_pagado, 0), 0)), 0) AS suma_saldos,
-                -- SUMA de sobrepagos (exceso de cobro que NO resta)
-                COALESCE(SUM(GREATEST(COALESCE(pp.total_pagado, 0) - p.monto_total, 0)), 0) AS suma_sobrepagos,
-                -- Número de préstamos con saldo > 0
-                SUM(CASE WHEN (p.monto_total - COALESCE(pp.total_pagado, 0)) > 0 THEN 1 ELSE 0 END) AS prestamos_activos
-            ")
+        $row = Prestamo::where('estado', 'Pendiente')
+            ->selectRaw('COALESCE(SUM(monto_prestado),0) AS capital_en_circulacion,
+                         COUNT(*) AS prestamos_activos')
             ->first();
 
-        $dineroCirculando = (int) round(($row->suma_saldos ?? 0) + ($row->suma_sobrepagos ?? 0));
+        $dineroCirculando = (int) ($row->capital_en_circulacion ?? 0);
         $prestamosActivos = (int) ($row->prestamos_activos ?? 0);
 
         return [$dineroCirculando, $prestamosActivos];
@@ -205,7 +152,7 @@ class CapitalEmpresaController extends Controller
         $montoCrudo = $request->montos[$request->asignar_id] ?? 0;
         $monto = (int) str_replace(['.', ','], '', $montoCrudo);
 
-        // Nuevo: confirmación opcional (frontend debe enviar hidden "confirmar")
+        // Confirmación opcional (si la vista envía "confirmar")
         $confirmar = filter_var($request->input('confirmar', null), FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE);
 
         if (!$monto || $monto <= 0) {
@@ -230,7 +177,7 @@ class CapitalEmpresaController extends Controller
             ]);
 
             $capitalPrestamista->monto_asignado   = max(0, (int) $capitalPrestamista->monto_asignado) + $monto;
-            $capitalPrestamista->monto_disponible = max(0, (int) $capitalPrestamista->monto_disponible) + $monto; // si manejas “disponible”
+            $capitalPrestamista->monto_disponible = max(0, (int) $capitalPrestamista->monto_disponible) + $monto;
             $capitalPrestamista->save();
 
             $capital->capital_anterior    = (int) $capital->capital_disponible;
@@ -294,11 +241,9 @@ class CapitalEmpresaController extends Controller
     }
 
     /**
-     * **PASAR TODO** lo que muestra “Capital asignado total” a Caja:
+     * Pasar TODO lo que muestra “Capital asignado total” a Caja:
      *  - Saldo de asesores (empresa.capital_asignado_total)
      *  - Asignaciones a prestamistas (capital_prestamistas.monto_asignado)
-     *
-     * Mantengo el mismo endpoint que ya usas en el botón.
      */
     public function pasarAbonosACaja(Request $request)
     {
@@ -338,7 +283,6 @@ class CapitalEmpresaController extends Controller
 
     /**
      * Devolver SOLO las asignaciones de CapitalPrestamista a Caja.
-     * (Sigue disponible si lo necesitas aparte.)
      */
     public function pasarAsignadoACaja(Request $request)
     {

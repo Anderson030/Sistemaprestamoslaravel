@@ -5,12 +5,13 @@ namespace App\Http\Controllers;
 use App\Models\Prestamo;
 use App\Models\Pago;
 use App\Models\GastoDiario;
-use App\Models\RegistroCapital;           // asignaciones / devoluciones / ajustes de caja
-use App\Models\PagoParcialAuditoria;      // pagos parciales del día (manuales)
-use App\Models\Abono;                     // abonos de clientes
-use App\Models\EmpresaCapital;            // para afectar caja (en storeGasto)
+use App\Models\RegistroCapital;
+use App\Models\PagoParcialAuditoria;
+use App\Models\Abono;
+use App\Models\EmpresaCapital;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Facades\Schema;   // <- importante
 use Carbon\Carbon;
 
 class AuditoriaController extends Controller
@@ -23,7 +24,7 @@ class AuditoriaController extends Controller
         $desde   = $desdeIn ? Carbon::parse($desdeIn)->toDateString() : now()->subDays(30)->toDateString();
         $hasta   = $hastaIn ? Carbon::parse($hastaIn)->toDateString() : now()->toDateString();
 
-        // 2) Calendario base (fechas únicas) + ABONOS usando COALESCE(fecha_pago, created_at)
+        // 2) Calendario base de días (incluye abonos por fecha_pago/created_at)
         $baseDias = DB::query()->fromSub(
             DB::query()->fromSub(function ($q) use ($desde, $hasta) {
                 $q->fromRaw("(
@@ -39,37 +40,55 @@ class AuditoriaController extends Controller
                     UNION
                     SELECT DATE(COALESCE(fecha_pago, created_at)) AS dia FROM abonos WHERE DATE(COALESCE(fecha_pago, created_at)) BETWEEN ? AND ?
                 ) t", [
-                    $desde,$hasta,  // prestamos
-                    $desde,$hasta,  // pagos confirmados
-                    $desde,$hasta,  // gastos
-                    $desde,$hasta,  // registros_capital
-                    $desde,$hasta,  // pagos parciales auditoría
-                    $desde,$hasta,  // abonos (fecha_pago o created_at)
+                    $desde,$hasta,
+                    $desde,$hasta,
+                    $desde,$hasta,
+                    $desde,$hasta,
+                    $desde,$hasta,
+                    $desde,$hasta,
                 ]);
             }, 'u')->selectRaw('dia')->groupBy('dia')
         , 'cal');
 
+        // -------- Selects dinámicos según exista o no "prestamos.desembolso_neto" ----------
+        $usaDesembolso = Schema::hasColumn('prestamos', 'desembolso_neto');
+        $sumPrestadoExpr = $usaDesembolso
+            ? 'SUM(COALESCE(desembolso_neto, monto_prestado))'
+            : 'SUM(monto_prestado)';
+
         // 3) Métricas por día
-        // Prestado
+        // Prestado (desembolso neto si existe; si no, monto_prestado)
         $prestado = Prestamo::query()
-            ->selectRaw("DATE(fecha_inicio) AS dia, SUM(monto_prestado) AS total_prestado, COUNT(*) AS nro_prestamos")
+            ->selectRaw("
+                DATE(fecha_inicio) AS dia,
+                {$sumPrestadoExpr} AS total_prestado,
+                COUNT(*) AS nro_prestamos
+            ")
             ->whereBetween(DB::raw('DATE(fecha_inicio)'), [$desde, $hasta])
             ->groupBy('dia');
 
-        // (A) Abonos por préstamo/día para netear pagos del MISMO préstamo y MISMO día
+        // (A) Abonos por préstamo/día (para neteo con pagos del mismo préstamo y día)
         $abonosPrestamoDia = DB::table('abonos')
             ->whereBetween(DB::raw('DATE(COALESCE(fecha_pago, created_at))'), [$desde, $hasta])
             ->selectRaw('prestamo_id, DATE(COALESCE(fecha_pago, created_at)) AS dia, SUM(monto) AS abonado_dia')
             ->groupBy('prestamo_id','dia');
 
-        // (B) Pagos confirmados por préstamo/día
+        // (B) Pagos confirmados por préstamo/día, excluyendo retanqueos si existe la columna
         $pagosPrestamoDia = DB::table('pagos')
             ->where('estado', 'Confirmado')
+            ->when(
+                Schema::hasColumn('pagos', 'es_retanqueo'),
+                fn($q) => $q->where(function ($qq) {
+                    $qq->whereNull('es_retanqueo')
+                       ->orWhere('es_retanqueo', false)
+                       ->orWhere('es_retanqueo', 0);
+                })
+            )
             ->whereBetween(DB::raw('DATE(fecha_cancelado)'), [$desde, $hasta])
             ->selectRaw('prestamo_id, DATE(fecha_cancelado) AS dia, SUM(monto_pagado) AS pagado_dia, COUNT(*) AS nro_pagos_dia')
             ->groupBy('prestamo_id','dia');
 
-        // (C) Neteo por préstamo/día y luego totalizo por día
+        // (C) Neteo por préstamo/día y total por día
         $cobrado = DB::query()
             ->fromSub($pagosPrestamoDia, 'p')
             ->leftJoinSub($abonosPrestamoDia, 'ab', function($j){
@@ -81,7 +100,7 @@ class AuditoriaController extends Controller
                          SUM(p.nro_pagos_dia) AS nro_pagos')
             ->groupBy('p.dia');
 
-        // Gastos: último del día
+        // Gastos del día: último registro
         $gastosUltimoId = GastoDiario::query()
             ->whereBetween(DB::raw('DATE(fecha)'), [$desde, $hasta])
             ->selectRaw('DATE(fecha) AS dia, MAX(id) AS gasto_id')
@@ -92,7 +111,7 @@ class AuditoriaController extends Controller
             ->join('gastos_diarios as gd', 'gd.id', '=', 'g.gasto_id')
             ->selectRaw("g.dia AS dia, gd.monto AS gastos_dia, COALESCE(NULLIF(gd.descripcion,''), '') AS descripciones");
 
-        // Asignado (neto)
+        // Asignado neto (asignaciones - devoluciones)
         $asignado = RegistroCapital::query()
             ->selectRaw("
                 DATE(created_at) AS dia,
@@ -109,19 +128,18 @@ class AuditoriaController extends Controller
             })
             ->groupBy('dia');
 
-        // Pagos parciales (manuales)
+        // Pagos parciales (manuales) y abonos
         $parciales = PagoParcialAuditoria::query()
             ->selectRaw("DATE(fecha) AS dia, COALESCE(SUM(monto),0) AS pagos_parciales")
             ->whereBetween(DB::raw('DATE(fecha)'), [$desde, $hasta])
             ->groupBy('dia');
 
-        // Abonos (aparecen en "Pagos parciales")
         $abonos = Abono::query()
             ->selectRaw("DATE(COALESCE(fecha_pago, created_at)) AS dia, COALESCE(SUM(monto),0) AS abonos_dia")
             ->whereBetween(DB::raw('DATE(COALESCE(fecha_pago, created_at))'), [$desde, $hasta])
             ->groupBy('dia');
 
-        // 4) Unión contra el calendario
+        // 4) Unión al calendario
         $rows = DB::query()
             ->fromSub($baseDias, 'cal')
             ->leftJoinSub($prestado,  'pr',   'pr.dia',   '=', 'cal.dia')
@@ -144,7 +162,7 @@ class AuditoriaController extends Controller
             ->orderBy('cal.dia','desc')
             ->get();
 
-        // 5) Balance
+        // 5) Balance por fila
         $auditoria = $rows->map(function ($r) {
             $asignado  = (float)$r->asignado_dia;
             $cobrado   = (float)$r->total_cobrado;
@@ -153,7 +171,7 @@ class AuditoriaController extends Controller
             $prestado  = (float)$r->total_prestado;
 
             $r->balance = ($asignado + $cobrado + $parciales) - ($gastos + $prestado);
-            $r->caja    = $cobrado - $prestado - $gastos; // histórico (si lo usas)
+            $r->caja    = $cobrado - $prestado - $gastos;
             $r->descripciones = trim((string)$r->descripciones) !== '' ? $r->descripciones : '-';
             return $r;
         })->values();
@@ -183,9 +201,14 @@ class AuditoriaController extends Controller
                         ELSE 0 END),0) AS neto")
             ->value('neto');
 
-        $prestadoHistoricoHastaCorte = (int) Prestamo::query()
+        // Prestado histórico hasta el corte (desembolso_neto si existe)
+        $prestadoHistoricoHastaCorte = (int) DB::table('prestamos')
             ->whereDate('fecha_inicio','<=',$hasta)
-            ->sum('monto_prestado');
+            ->selectRaw(($usaDesembolso
+                ? 'COALESCE(SUM(COALESCE(desembolso_neto, monto_prestado)),0)'
+                : 'COALESCE(SUM(monto_prestado),0)'
+            ).' AS tot')
+            ->value('tot');
 
         $asignadoRestanteCorte = max(0, $asignadoHistoricoHastaCorte - $prestadoHistoricoHastaCorte);
 
@@ -200,7 +223,7 @@ class AuditoriaController extends Controller
 
     // ========= Formularios =========
 
-    // Registrar gasto del día — “último valor manda” + ajusta caja con delta
+    // “Último valor manda” + ajuste de caja con delta
     public function storeGasto(Request $request)
     {
         $data = $request->validate([
@@ -214,26 +237,19 @@ class AuditoriaController extends Controller
 
         try {
             DB::transaction(function () use ($data, $nuevoMonto, $desc) {
-
-                // Bloqueamos registro de empresa
                 $empresa = EmpresaCapital::query()->lockForUpdate()->latest('id')->firstOrFail();
 
-                // Último gasto registrado para la fecha dada
                 $existing = GastoDiario::whereDate('fecha', $data['fecha'])
                     ->orderByDesc('id')
                     ->first();
 
                 $viejoMonto = $existing ? (int)$existing->monto : 0;
-
-                // Δ: >0 aumenta gasto (resta caja), <0 reduce gasto (devuelve caja)
                 $delta = $nuevoMonto - $viejoMonto;
 
-                // Si aumenta el gasto, valida que la caja alcance
                 if ($delta > 0 && $delta > (int)$empresa->capital_disponible) {
                     abort(400, 'El gasto excede la caja disponible.');
                 }
 
-                // Guardar/actualizar “último valor” del gasto del día
                 if ($existing) {
                     $existing->update([
                         'monto'       => $nuevoMonto,
@@ -249,14 +265,11 @@ class AuditoriaController extends Controller
                     ]);
                 }
 
-                // Ajuste de caja en base al Δ
                 if ($delta !== 0) {
-                    // Caja nueva = caja actual - Δ (si Δ>0 resta; si Δ<0 suma)
                     $empresa->capital_anterior   = (int) $empresa->capital_disponible;
                     $empresa->capital_disponible = (int) $empresa->capital_disponible - (int) $delta;
                     $empresa->save();
 
-                    // Registro en historial (negativo = egreso, positivo = devolución)
                     RegistroCapital::create([
                         'monto'       => $delta > 0 ? -abs((int)$delta) : abs((int)$delta),
                         'user_id'     => auth()->id(),
@@ -272,7 +285,6 @@ class AuditoriaController extends Controller
         return back()->with('ok','Gasto del día guardado. Caja ajustada según el último valor de esa fecha.');
     }
 
-    // Registrar pago parcial del día (manual)
     public function storePagoParcial(Request $request)
     {
         $data = $request->validate([
