@@ -109,13 +109,6 @@ class PagoController extends Controller
         return view('admin.pagos.cargar_datos', compact('datosCliente', 'clientes'));
     }
 
-    /**
-     * Confirma un pago (por id de pago).
-     * - Marca la cuota como Confirmado.
-     * - Suma el IMPORTE NETO al saldo de asesores (empresa.capital_asignado_total).
-     * - Acredita ese NETO al capital del PRESTAMISTA dueño del préstamo (monto_disponible).
-     * - Registra en registro_capital y (opcional) movimiento del prestamista.
-     */
     public function store($id)
     {
         $pago = Pago::findOrFail($id);
@@ -143,7 +136,7 @@ class PagoController extends Controller
             $montoCuota = (int) $pago->monto_pagado;
             $neto = max(0, $montoCuota - $abonosCuota);
 
-            // 3) Acumular SOLO el NETO en SALDO DE ASESORES (no a caja)
+            // 3) Acumular SOLO el NETO en SALDO DE ASESORES
             $empresa = EmpresaCapital::query()->lockForUpdate()->latest('id')->first();
             if ($empresa && $neto > 0) {
                 $empresa->capital_anterior       = (int) ($empresa->capital_asignado_total ?? 0);
@@ -151,7 +144,7 @@ class PagoController extends Controller
                 $empresa->save();
             }
 
-            // 3.b) Acreditar NETO al PRESTAMISTA dueño del préstamo (para que pueda volver a prestar)
+            // 3.b) Acreditar NETO al PRESTAMISTA dueño del préstamo
             $prestamo = Prestamo::find($pago->prestamo_id);
             $ownerId  = $prestamo->idusuario ?? auth()->id();
 
@@ -166,7 +159,6 @@ class PagoController extends Controller
                 $cp->monto_disponible = (int) $cp->monto_disponible + (int) $neto;
                 $cp->save();
 
-                // (Opcional) Log del prestamista
                 if (class_exists(MovimientoCapitalPrestamista::class)) {
                     MovimientoCapitalPrestamista::create([
                         'user_id'     => $ownerId,
@@ -249,18 +241,11 @@ class PagoController extends Controller
 
     public function update(Request $request, Pago $pago) { /* ... */ }
 
-    /**
-     * Revierte la confirmación de un pago:
-     * - Resta del SALDO DE ASESORES el MISMO NETO que se sumó.
-     * - Resta ese NETO del capital del PRESTAMISTA dueño del préstamo.
-     * - Deja el pago como Pendiente y registra trazas.
-     */
     public function destroy($id)
     {
         $pago = Pago::findOrFail($id);
 
         DB::transaction(function () use ($pago) {
-            // Si estaba confirmado, revertir saldo de asesores por el NETO
             if ($pago->estado === 'Confirmado') {
 
                 $nroCuota = $this->resolverNroCuota($pago);
@@ -271,7 +256,6 @@ class PagoController extends Controller
                 $montoCuota = (int) $pago->monto_pagado;
                 $neto = max(0, $montoCuota - $abonosCuota);
 
-                // Empresa (saldo asesores)
                 $empresa = EmpresaCapital::query()->lockForUpdate()->latest('id')->first();
                 if ($empresa && $neto > 0) {
                     $empresa->capital_anterior       = (int) ($empresa->capital_asignado_total ?? 0);
@@ -279,7 +263,6 @@ class PagoController extends Controller
                     $empresa->save();
                 }
 
-                // Prestamista dueño del préstamo
                 $prestamo = Prestamo::find($pago->prestamo_id);
                 $ownerId  = $prestamo->idusuario ?? auth()->id();
 
@@ -310,12 +293,10 @@ class PagoController extends Controller
                 ]);
             }
 
-            // Revertir estado del pago
             $pago->fecha_cancelado = null;
             $pago->estado = 'Pendiente';
             $pago->save();
 
-            // Si el préstamo quedó con cuotas pendientes, marcarlo Pendiente (por consistencia)
             $faltantes = Pago::where('prestamo_id', $pago->prestamo_id)
                 ->where('estado', 'Pendiente')
                 ->count();
@@ -334,10 +315,6 @@ class PagoController extends Controller
             ->with('icono', 'success');
     }
 
-    /**
-     * Calcula el número de cuota de un Pago dentro de su préstamo,
-     * sin tener columna en DB. Cuenta pagos anteriores por fecha e id.
-     */
     private function resolverNroCuota(Pago $pago): int
     {
         return (int) Pago::where('prestamo_id', $pago->prestamo_id)

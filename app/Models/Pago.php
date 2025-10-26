@@ -19,9 +19,17 @@ class Pago extends Model
         'fecha_cancelado',
     ];
 
-    /**
-     * Relación: Un pago pertenece a un préstamo.
-     */
+    protected $casts = [
+        'monto_pagado' => 'decimal:2',
+    ];
+
+    // ✅ Defensivo: normaliza si quedó guardado *100
+    public function getMontoPagadoAttribute($value)
+    {
+        if ($value === null) return null;
+        return ($value >= 10000000) ? $value / 100 : $value;
+    }
+
     public function prestamo()
     {
         return $this->belongsTo(Prestamo::class);

@@ -44,150 +44,163 @@ class PrestamoController extends Controller
         return view('admin.prestamos.create', compact('clientes'));
     }
 
-   public function store(Request $request)
-{
-    // Normalizar montos (quitar separadores)
-    $request->merge([
-        'monto_prestado' => str_replace(['.', ','], '', $request->monto_prestado),
-        'monto_total'    => str_replace(['.', ','], '', $request->monto_total),
-        'monto_cuota'    => str_replace(['.', ','], '', $request->monto_cuota),
-    ]);
-
-    $request->validate([
-        'cliente_id'     => 'required',
-        'monto_prestado' => 'required|numeric|min:1',
-        'tasa_interes'   => 'required|numeric',
-        'modalidad'      => 'required|in:Diario,Semanal,Quincenal,Mensual,Anual',
-        'nro_cuotas'     => 'required|integer|min:1',
-        'fecha_inicio'   => 'required|date',
-        'monto_total'    => 'required|numeric|min:1',
-        'monto_cuota'    => 'required|numeric|min:1',
-    ]);
-
-    $usuario         = auth()->user();
-    $ownerId         = (int) ($request->input('prestamista_id') ?: $usuario->id);
-    $montoSolicitado = (int) $request->monto_prestado;
-
-    // Asegura que exista registro de capital de empresa
-    $empresaExiste = EmpresaCapital::latest('id')->first();
-    if (!$empresaExiste) {
-        return back()->withInput()
-            ->with('mensaje', 'Debes crear primero el registro de capital de empresa.')
-            ->with('icono', 'error');
+    /**
+     * Convierte un string con formato colombiano/español a float en pesos.
+     * "1.234.567,89" -> 1234567.89
+     */
+    private function parsePesos(null|string $s): float
+    {
+        if ($s === null) return 0.0;
+        $s = str_replace('.', '', $s);   // quita miles
+        $s = str_replace(',', '.', $s);  // coma -> punto decimal
+        return (float) $s;
     }
 
-    try {
-        DB::transaction(function () use ($request, $ownerId, $montoSolicitado) {
+    public function store(Request $request)
+    {
+        $request->validate([
+            'cliente_id'     => 'required',
+            'monto_prestado' => 'required',   // lo parseamos nosotros
+            'tasa_interes'   => 'required|numeric',
+            'modalidad'      => 'required|in:Diario,Semanal,Quincenal,Mensual,Anual',
+            'nro_cuotas'     => 'required|integer|min:1',
+            'fecha_inicio'   => 'required|date',
+            // 'monto_total' y 'monto_cuota' se ignoran si vienen del front
+        ]);
 
-            // Bloquear filas involucradas
-            $cp = CapitalPrestamista::query()
-                ->lockForUpdate()
-                ->firstOrCreate(['user_id' => $ownerId], [
-                    'monto_asignado'   => 0,
-                    'monto_disponible' => 0,
-                ]);
+        $usuario         = auth()->user();
+        $ownerId         = (int) ($request->input('prestamista_id') ?: $usuario->id);
 
-            $empresa = EmpresaCapital::query()
-                ->lockForUpdate()
-                ->latest('id')
-                ->firstOrFail();
+        // ✅ Parseo seguro y recálculo en backend
+        $principal = $this->parsePesos($request->monto_prestado); // pesos
+        $rate      = (float) $request->tasa_interes;               // 20 -> 0.20
+        if ($rate > 1) { $rate = $rate / 100; }
 
-            $saldoAsesores = (int) ($empresa->capital_asignado_total ?? 0);
+        $cuotas = max((int) $request->nro_cuotas, 1);
 
-            // 1) Primero usar saldo de asesores (disminuye capital_asignado_total)
-            if ($saldoAsesores > 0) {
-                $aTransferir = min($montoSolicitado, $saldoAsesores);
+        $montoTotal = round($principal * (1 + $rate), 2);
+        $montoCuota = round($montoTotal / $cuotas, 2);
 
-                $empresa->capital_anterior       = (int) $saldoAsesores;          // guarda el anterior del campo que modificas
-                $empresa->capital_asignado_total = $saldoAsesores - $aTransferir; // ↓
-                $empresa->save();
+        // Asegura que exista registro de capital de empresa
+        $empresaExiste = EmpresaCapital::latest('id')->first();
+        if (!$empresaExiste) {
+            return back()->withInput()
+                ->with('mensaje', 'Debes crear primero el registro de capital de empresa.')
+                ->with('icono', 'error');
+        }
 
-                $cp->monto_disponible = (int) $cp->monto_disponible + $aTransferir; // ↑
+        try {
+            DB::transaction(function () use ($request, $ownerId, $principal, $montoTotal, $montoCuota, $cuotas) {
+
+                // Bloquear filas involucradas
+                $cp = CapitalPrestamista::query()
+                    ->lockForUpdate()
+                    ->firstOrCreate(['user_id' => $ownerId], [
+                        'monto_asignado'   => 0,
+                        'monto_disponible' => 0,
+                    ]);
+
+                $empresa = EmpresaCapital::query()
+                    ->lockForUpdate()
+                    ->latest('id')
+                    ->firstOrFail();
+
+                $saldoAsesores = (int) ($empresa->capital_asignado_total ?? 0);
+                $montoSolicitadoInt = (int) round($principal, 0); // pesos enteros para movimientos
+
+                // 1) Usar saldo de asesores
+                if ($saldoAsesores > 0) {
+                    $aTransferir = min($montoSolicitadoInt, $saldoAsesores);
+
+                    $empresa->capital_anterior       = (int) $saldoAsesores;
+                    $empresa->capital_asignado_total = $saldoAsesores - $aTransferir;
+                    $empresa->save();
+
+                    $cp->monto_disponible = (int) $cp->monto_disponible + $aTransferir;
+                    $cp->save();
+
+                    RegistroCapital::create([
+                        'monto'       => -$aTransferir,
+                        'user_id'     => $ownerId,
+                        'tipo_accion' => 'Traspaso desde saldo de asesores al prestamista #' . $ownerId . ' (para préstamo)',
+                    ]);
+
+                    if (class_exists(MovimientoCapitalPrestamista::class)) {
+                        MovimientoCapitalPrestamista::create([
+                            'user_id'     => $ownerId,
+                            'monto'       => $aTransferir,
+                            'descripcion' => 'Traspaso desde saldo de asesores',
+                        ]);
+                    }
+                }
+
+                // 2) Verifica capital disponible
+                if ((int) $cp->monto_disponible < $montoSolicitadoInt) {
+                    throw new \DomainException('__NO_CAPITAL__');
+                }
+
+                // 3) Crear préstamo (montos en pesos, sin *100)
+                $prestamo = new Prestamo();
+                $prestamo->cliente_id     = (int) $request->cliente_id;
+                $prestamo->monto_prestado = $principal;       // DECIMAL(15,2) recomendado
+                $prestamo->tasa_interes   = (float) $request->tasa_interes;
+                $prestamo->modalidad      = $request->modalidad;
+                $prestamo->nro_cuotas     = $cuotas;
+                $prestamo->fecha_inicio   = $request->fecha_inicio;
+                $prestamo->monto_total    = $montoTotal;      // SIN *100
+                $prestamo->idusuario      = $ownerId;
+                $prestamo->estado         = 'Pendiente';
+                $prestamo->save();
+
+                // 4) Cronograma (guardar cuota correcta en pesos)
+                $fechaInicio = Carbon::parse($request->fecha_inicio);
+                for ($i = 1; $i <= $cuotas; $i++) {
+                    switch ($request->modalidad) {
+                        case 'Diario':    $venc = $fechaInicio->copy()->addDays($i); break;
+                        case 'Semanal':   $venc = $fechaInicio->copy()->addWeeks($i); break;
+                        case 'Quincenal': $venc = $fechaInicio->copy()->addWeeks($i * 2 - 1); break;
+                        case 'Mensual':   $venc = $fechaInicio->copy()->addMonths($i); break;
+                        case 'Anual':     $venc = $fechaInicio->copy()->addYears($i); break;
+                    }
+
+                    $pago = new Pago();
+                    $pago->prestamo_id     = $prestamo->id;
+                    $pago->monto_pagado    = $montoCuota;          // SIN *100 ni (int)
+                    $pago->fecha_pago      = $venc->toDateString();
+                    $pago->metodo_pago     = 'Efectivo';
+                    $pago->referencia_pago = 'Pago de la cuota ' . $i;
+                    $pago->estado          = 'Pendiente';
+                    $pago->save();
+                }
+
+                // 5) Descontar capital del prestamista
+                $asignadoAntes = (int) $cp->monto_asignado;
+                $cp->monto_disponible = max(0, (int) $cp->monto_disponible - $montoSolicitadoInt);
+                $cp->monto_asignado   = max(0, $asignadoAntes - min($montoSolicitadoInt, $asignadoAntes));
                 $cp->save();
-
-                RegistroCapital::create([
-                    'monto'       => -(int) $aTransferir,
-                    'user_id'     => $ownerId,
-                    'tipo_accion' => 'Traspaso desde saldo de asesores al prestamista #' . $ownerId . ' (para préstamo)',
-                ]);
 
                 if (class_exists(MovimientoCapitalPrestamista::class)) {
                     MovimientoCapitalPrestamista::create([
                         'user_id'     => $ownerId,
-                        'monto'       => $aTransferir,
-                        'descripcion' => 'Traspaso desde saldo de asesores',
+                        'monto'       => $montoSolicitadoInt,
+                        'descripcion' => 'Préstamo realizado ID ' . $prestamo->id,
                     ]);
                 }
+            }, 3);
+        } catch (\DomainException $e) {
+            if ($e->getMessage() === '__NO_CAPITAL__') {
+                return back()
+                    ->withInput()
+                    ->with('mensaje', '❌ No hay capital asignado suficiente para realizar este préstamo para el prestamista seleccionado.')
+                    ->with('icono', 'error');
             }
-
-            // 2) Si aun así no alcanza, lanza una excepción controlada
-            if ((int) $cp->monto_disponible < $montoSolicitado) {
-                throw new \DomainException('__NO_CAPITAL__');
-            }
-
-            // 3) Crear préstamo
-            $prestamo = new Prestamo();
-            $prestamo->cliente_id     = (int) $request->cliente_id;
-            $prestamo->monto_prestado = $montoSolicitado;
-            $prestamo->tasa_interes   = $request->tasa_interes;
-            $prestamo->modalidad      = $request->modalidad;
-            $prestamo->nro_cuotas     = (int) $request->nro_cuotas;
-            $prestamo->fecha_inicio   = $request->fecha_inicio;
-            $prestamo->monto_total    = (int) $request->monto_total;
-            $prestamo->idusuario      = $ownerId;
-            $prestamo->save();
-
-            // 4) Cronograma
-            for ($i = 1; $i <= (int) $request->nro_cuotas; $i++) {
-                $pago = new Pago();
-                $pago->prestamo_id  = $prestamo->id;
-                $pago->monto_pagado = (int) $request->monto_cuota;
-
-                $fechaInicio = \Carbon\Carbon::parse($request->fecha_inicio);
-                switch ($request->modalidad) {
-                    case 'Diario':    $fechaVencimiento = $fechaInicio->copy()->addDays($i); break;
-                    case 'Semanal':   $fechaVencimiento = $fechaInicio->copy()->addWeeks($i); break;
-                    case 'Quincenal': $fechaVencimiento = $fechaInicio->copy()->addWeeks($i * 2 - 1); break;
-                    case 'Mensual':   $fechaVencimiento = $fechaInicio->copy()->addMonths($i); break;
-                    case 'Anual':     $fechaVencimiento = $fechaInicio->copy()->addYears($i); break;
-                }
-
-                $pago->fecha_pago      = $fechaVencimiento;
-                $pago->metodo_pago     = 'Efectivo';
-                $pago->referencia_pago = 'Pago de la cuota ' . $i;
-                $pago->estado          = 'Pendiente';
-                $pago->save();
-            }
-
-            // 5) Descontar capital del prestamista (disponible y, si aplica, asignado)
-            $asignadoAntes = (int) $cp->monto_asignado;
-            $cp->monto_disponible = max(0, (int) $cp->monto_disponible - $montoSolicitado);
-            $cp->monto_asignado   = max(0, $asignadoAntes - min($montoSolicitado, $asignadoAntes));
-            $cp->save();
-
-            if (class_exists(MovimientoCapitalPrestamista::class)) {
-                MovimientoCapitalPrestamista::create([
-                    'user_id'     => $ownerId,
-                    'monto'       => $montoSolicitado,
-                    'descripcion' => 'Préstamo realizado ID ' . $prestamo->id,
-                ]);
-            }
-        }, 3);
-    } catch (\DomainException $e) {
-        if ($e->getMessage() === '__NO_CAPITAL__') {
-            return back()
-                ->withInput()
-                ->with('mensaje', '❌ No hay capital asignado suficiente para realizar este préstamo para el prestamista seleccionado.')
-                ->with('icono', 'error');
+            throw $e;
         }
-        throw $e; // otras DomainException no esperadas
+
+        return redirect()->route('admin.prestamos.index')
+            ->with('mensaje', 'Se registró el préstamo correctamente')
+            ->with('icono', 'success');
     }
-
-    return redirect()->route('admin.prestamos.index')
-        ->with('mensaje', 'Se registró el préstamo correctamente')
-        ->with('icono', 'success');
-}
-
 
     public function edit($id)
     {
@@ -208,20 +221,13 @@ class PrestamoController extends Controller
 
     public function update(Request $request, $id)
     {
-        // Normalizar montos
-        $request->merge([
-            'monto_prestado' => str_replace(['.', ','], '', $request->monto_prestado),
-            'monto_total'    => str_replace(['.', ','], '', $request->monto_total),
-        ]);
-
         $request->validate([
             'cliente_id'     => 'required',
-            'monto_prestado' => 'required|numeric|min:1',
+            'monto_prestado' => 'required',
             'tasa_interes'   => 'required|numeric',
             'modalidad'      => 'required|in:Diario,Semanal,Quincenal,Mensual,Anual',
             'nro_cuotas'     => 'required|integer|min:1',
             'fecha_inicio'   => 'required|date',
-            'monto_total'    => 'required|numeric|min:1',
         ]);
 
         $prestamo = Prestamo::findOrFail($id);
@@ -232,15 +238,24 @@ class PrestamoController extends Controller
                 ->with('icono', 'error');
         }
 
+        $principal = $this->parsePesos($request->monto_prestado);
+        $rate      = (float) $request->tasa_interes;
+        if ($rate > 1) { $rate = $rate / 100; }
+
+        $cuotas     = max((int) $request->nro_cuotas, 1);
+        $montoTotal = round($principal * (1 + $rate), 2);
+
         $prestamo->update([
             'cliente_id'     => (int) $request->cliente_id,
-            'monto_prestado' => (int) $request->monto_prestado,
-            'tasa_interes'   => $request->tasa_interes,
+            'monto_prestado' => $principal,
+            'tasa_interes'   => (float) $request->tasa_interes,
             'modalidad'      => $request->modalidad,
-            'nro_cuotas'     => (int) $request->nro_cuotas,
+            'nro_cuotas'     => $cuotas,
             'fecha_inicio'   => $request->fecha_inicio,
-            'monto_total'    => (int) $request->monto_total,
+            'monto_total'    => $montoTotal,
         ]);
+
+        // Nota: si permites cambiar nro_cuotas, deberías regenerar cronograma aquí (cuidando cuotas ya pagadas).
 
         return redirect()->route('admin.prestamos.index')
             ->with('mensaje', 'Préstamo actualizado correctamente.')
@@ -355,7 +370,7 @@ class PrestamoController extends Controller
 
                 $pago = new Pago();
                 $pago->prestamo_id     = $nuevo->id;
-                $pago->monto_pagado    = $montoCuota;
+                $pago->monto_pagado    = $montoCuota;          // SIN *100
                 $pago->fecha_pago      = $venc->toDateString();
                 $pago->metodo_pago     = 'Efectivo';
                 $pago->referencia_pago = 'Pago de la cuota ' . $i;
