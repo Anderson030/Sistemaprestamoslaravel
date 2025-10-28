@@ -25,6 +25,7 @@ class AbonoController extends Controller
             // Permitimos "150.000", "150,000" o "150000"
             'monto'      => ['required', 'string', 'max:50'],
             'referencia' => 'nullable|string|max:255',
+            // IMPORTANTE: el modal no envía fecha; permitir null y usar hoy por defecto
             'fecha_pago' => 'nullable|date',
         ]);
 

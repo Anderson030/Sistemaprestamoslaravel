@@ -111,21 +111,33 @@ class AuditoriaController extends Controller
             ->join('gastos_diarios as gd', 'gd.id', '=', 'g.gasto_id')
             ->selectRaw("g.dia AS dia, gd.monto AS gastos_dia, COALESCE(NULLIF(gd.descripcion,''), '') AS descripciones");
 
-        // Asignado neto (asignaciones - devoluciones)
+        /**
+         * Asignado neto (del día)
+         * Incluye:
+         *  - Capital asignado a prestamistas (+)
+         *  - Capital devuelto por prestamistas (-)
+         *  - Ingresos al "saldo de asesores/ruta" por cobro de cuotas netas (+)
+         *  - Ingresos por "Cobro de abono (transitorio asesores)" (+)
+         *  - Traslado de abonos a Caja (-)
+         *
+         * NOTA: Los KPIs de cabecera se mantienen como estaban (solo asignación/devolución)
+         * para no cambiar su significado histórico.
+         */
         $asignado = RegistroCapital::query()
             ->selectRaw("
                 DATE(created_at) AS dia,
-                SUM(CASE
+                SUM(
+                    CASE
                         WHEN tipo_accion LIKE 'Capital asignado a prestamista:%' THEN monto
                         WHEN tipo_accion LIKE 'Capital devuelto por prestamista:%' THEN -monto
+                        WHEN tipo_accion LIKE 'Ingreso recibido por asesor (cuota neta)%' THEN monto
+                        WHEN tipo_accion LIKE 'Cobro de abono (transitorio asesores)%' THEN monto
+                        WHEN tipo_accion LIKE 'Traslado de abonos a Caja%' THEN -monto
                         ELSE 0
-                    END) AS asignado_dia
+                    END
+                ) AS asignado_dia
             ")
             ->whereBetween(DB::raw('DATE(created_at)'), [$desde, $hasta])
-            ->where(function ($q) {
-                $q->where('tipo_accion', 'LIKE', 'Capital asignado a prestamista:%')
-                  ->orWhere('tipo_accion', 'LIKE', 'Capital devuelto por prestamista:%');
-            })
             ->groupBy('dia');
 
         // Pagos parciales (manuales) y abonos
@@ -176,7 +188,7 @@ class AuditoriaController extends Controller
             return $r;
         })->values();
 
-        // 6) KPIs cabecera
+        // 6) KPIs cabecera (se conservan con el significado original)
         $asignadoTotalRango = (int) RegistroCapital::query()
             ->whereBetween(DB::raw('DATE(created_at)'), [$desde, $hasta])
             ->where(function ($q) {
