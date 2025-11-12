@@ -3,7 +3,6 @@
 namespace App\Http\Controllers;
 
 use App\Models\Prestamo;
-use App\Models\Pago;
 use App\Models\GastoDiario;
 use App\Models\RegistroCapital;
 use App\Models\PagoParcialAuditoria;
@@ -11,99 +10,201 @@ use App\Models\Abono;
 use App\Models\EmpresaCapital;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
-use Illuminate\Support\Facades\Schema;   // <- importante
+use Illuminate\Support\Facades\Schema;
 use Carbon\Carbon;
 
 class AuditoriaController extends Controller
 {
     public function index(Request $request)
     {
-        // 1) Rango de fechas
+        // ----------------------------
+        // 1) Fechas (zona local Bogotá) y derivados
+        // ----------------------------
         $desdeIn = $request->input('desde');
         $hastaIn = $request->input('hasta');
-        $desde   = $desdeIn ? Carbon::parse($desdeIn)->toDateString() : now()->subDays(30)->toDateString();
-        $hasta   = $hastaIn ? Carbon::parse($hastaIn)->toDateString() : now()->toDateString();
 
-        // 2) Calendario base de días (incluye abonos por fecha_pago/created_at)
+        $desdeLocal = $desdeIn
+            ? Carbon::parse($desdeIn, 'America/Bogota')->startOfDay()
+            : now('America/Bogota')->subDays(30)->startOfDay();
+
+        $hastaLocal = $hastaIn
+            ? Carbon::parse($hastaIn, 'America/Bogota')->endOfDay()
+            : now('America/Bogota')->endOfDay();
+
+        // Para DATETIME almacenados en UTC
+        $startUtc = $desdeLocal->clone()->timezone('UTC');
+        $endUtc   = $hastaLocal->clone()->timezone('UTC');
+
+        // Para columnas DATE
+        $desde = $desdeLocal->toDateString();
+        $hasta = $hastaLocal->toDateString();
+
+        // Proyección de DATETIME(UTC) -> día local
+        $TZ_FROM   = '+00:00';
+        $TZ_TO     = '-05:00'; // America/Bogota
+        $exprLocal = fn($col) => "DATE(CONVERT_TZ($col,'$TZ_FROM','$TZ_TO'))";
+
+        // ============================
+        // Helper: expresiones/columnas según esquema
+        // ============================
+
+        // 1) Fecha de cobro contable (DATE)
+        $fechaCobroExpr = Schema::hasColumn('pagos', 'fecha_contable')
+            ? 'DATE(p.fecha_contable)'
+            : "DATE(COALESCE(p.fecha_cancelado, p.fecha_pago))";
+
+        // 2) Columna monetaria en pagos
+        if (Schema::hasColumn('pagos', 'cuota_pagada')) {
+            $colMontoPago = 'p.cuota_pagada';
+        } elseif (Schema::hasColumn('pagos', 'monto_pagado')) {
+            $colMontoPago = 'p.monto_pagado';
+        } elseif (Schema::hasColumn('pagos', 'monto')) {
+            $colMontoPago = 'p.monto';
+        } else {
+            $colMontoPago = '0';
+        }
+
+        // 3) fecha_inicio de prestamos es DATE → no convertir TZ
+        $fechaInicioDiaExpr = 'DATE(fecha_inicio)';
+
+        // ----------------------------
+        // 2) Calendario base (días con actividad)
+        // ----------------------------
         $baseDias = DB::query()->fromSub(
-            DB::query()->fromSub(function ($q) use ($desde, $hasta) {
+            DB::query()->fromSub(function ($q) use ($exprLocal, $startUtc, $endUtc, $desde, $hasta, $fechaCobroExpr, $fechaInicioDiaExpr) {
                 $q->fromRaw("(
-                    SELECT DATE(fecha_inicio)    AS dia FROM prestamos            WHERE DATE(fecha_inicio)    BETWEEN ? AND ?
+                    -- Prestamos.fecha_inicio (DATE)
+                    SELECT {$fechaInicioDiaExpr} AS dia
+                    FROM prestamos
+                    WHERE DATE(fecha_inicio) BETWEEN ? AND ?
+
                     UNION
-                    SELECT DATE(fecha_cancelado) AS dia FROM pagos                WHERE estado='Confirmado' AND DATE(fecha_cancelado) BETWEEN ? AND ?
+                    -- Pagos (DATE) -> usa fecha_contable si existe; si no, coalesce(fecha_cancelado, fecha_pago)
+                    SELECT {$fechaCobroExpr} AS dia
+                    FROM pagos p
+                    WHERE p.estado = 'Confirmado'
+                      AND {$fechaCobroExpr} BETWEEN ? AND ?
+
                     UNION
-                    SELECT DATE(fecha)           AS dia FROM gastos_diarios       WHERE DATE(fecha)           BETWEEN ? AND ?
+                    -- Gastos_diarios.fecha (DATE)
+                    SELECT DATE(fecha) AS dia
+                    FROM gastos_diarios
+                    WHERE DATE(fecha) BETWEEN ? AND ?
+
                     UNION
-                    SELECT DATE(created_at)      AS dia FROM registros_capital    WHERE DATE(created_at)      BETWEEN ? AND ?
+                    -- Registros_capital.created_at (DATETIME/UTC)
+                    SELECT {$exprLocal('created_at')} AS dia
+                    FROM registros_capital
+                    WHERE created_at BETWEEN ? AND ?
+
                     UNION
-                    SELECT DATE(fecha)           AS dia FROM pagoparcialauditoria WHERE DATE(fecha)           BETWEEN ? AND ?
+                    -- PagoParcialAuditoria.fecha (DATE)
+                    SELECT DATE(fecha) AS dia
+                    FROM pagoparcialauditoria
+                    WHERE DATE(fecha) BETWEEN ? AND ?
+
                     UNION
-                    SELECT DATE(COALESCE(fecha_pago, created_at)) AS dia FROM abonos WHERE DATE(COALESCE(fecha_pago, created_at)) BETWEEN ? AND ?
+                    -- Abonos: si hay fecha_pago (DATE) úsala; si no, created_at (DATETIME/UTC)
+                    SELECT DATE(COALESCE(fecha_pago, CONVERT_TZ(created_at,'+00:00','-05:00'))) AS dia
+                    FROM abonos
+                    WHERE (
+                        (fecha_pago IS NOT NULL AND DATE(fecha_pago) BETWEEN ? AND ?)
+                        OR (fecha_pago IS NULL AND created_at BETWEEN ? AND ?)
+                    )
                 ) t", [
-                    $desde,$hasta,
-                    $desde,$hasta,
-                    $desde,$hasta,
-                    $desde,$hasta,
-                    $desde,$hasta,
-                    $desde,$hasta,
+                    // prestamos (DATE)
+                    $desde, $hasta,
+                    // pagos (DATE)
+                    $desde, $hasta,
+                    // gastos_diarios (DATE)
+                    $desde, $hasta,
+                    // registros_capital (UTC)
+                    $startUtc, $endUtc,
+                    // pago parcial auditoria (DATE)
+                    $desde, $hasta,
+                    // abonos fecha_pago (DATE)
+                    $desde, $hasta,
+                    // abonos created_at (UTC)
+                    $startUtc, $endUtc,
                 ]);
             }, 'u')->selectRaw('dia')->groupBy('dia')
         , 'cal');
 
-        // -------- Selects dinámicos según exista o no "prestamos.desembolso_neto" ----------
-        $usaDesembolso = Schema::hasColumn('prestamos', 'desembolso_neto');
+        // ----------------------------
+        // 3) Métricas por día
+        // ----------------------------
+        $usaDesembolso   = Schema::hasColumn('prestamos', 'desembolso_neto');
         $sumPrestadoExpr = $usaDesembolso
             ? 'SUM(COALESCE(desembolso_neto, monto_prestado))'
             : 'SUM(monto_prestado)';
 
-        // 3) Métricas por día
-        // Prestado (desembolso neto si existe; si no, monto_prestado)
+        // Prestado (se agrupa por día de fecha_inicio - DATE)
         $prestado = Prestamo::query()
-            ->selectRaw("
-                DATE(fecha_inicio) AS dia,
-                {$sumPrestadoExpr} AS total_prestado,
-                COUNT(*) AS nro_prestamos
-            ")
+            ->selectRaw("{$fechaInicioDiaExpr} AS dia, {$sumPrestadoExpr} AS total_prestado, COUNT(*) AS nro_prestamos")
             ->whereBetween(DB::raw('DATE(fecha_inicio)'), [$desde, $hasta])
             ->groupBy('dia');
 
-        // (A) Abonos por préstamo/día (para neteo con pagos del mismo préstamo y día)
-        $abonosPrestamoDia = DB::table('abonos')
-            ->whereBetween(DB::raw('DATE(COALESCE(fecha_pago, created_at))'), [$desde, $hasta])
-            ->selectRaw('prestamo_id, DATE(COALESCE(fecha_pago, created_at)) AS dia, SUM(monto) AS abonado_dia')
-            ->groupBy('prestamo_id','dia');
+        // ========= COBRADO NETO (pago - abonos del mismo préstamo y día) =========
 
-        // (B) Pagos confirmados por préstamo/día, excluyendo retanqueos si existe la columna
-        $pagosPrestamoDia = DB::table('pagos')
-            ->where('estado', 'Confirmado')
+        // A) Abonos por préstamo/día (para neteo)
+        $abonosPrestamoDia = DB::table('abonos as a')
+            ->selectRaw("
+                a.prestamo_id,
+                DATE(COALESCE(a.fecha_pago, CONVERT_TZ(a.created_at,'+00:00','-05:00'))) AS dia,
+                SUM(a.monto) AS abonado_dia
+            ")
+            ->where(function($q) use ($desde, $hasta, $startUtc, $endUtc){
+                $q->where(function($qq) use ($desde, $hasta){
+                    $qq->whereNotNull('a.fecha_pago')
+                       ->whereBetween(DB::raw('DATE(a.fecha_pago)'), [$desde, $hasta]);
+                })->orWhere(function($qq) use ($startUtc, $endUtc){
+                    $qq->whereNull('a.fecha_pago')
+                       ->whereBetween('a.created_at', [$startUtc, $endUtc]);
+                });
+            })
+            ->groupBy('a.prestamo_id','dia');
+
+        // B) Pagos confirmados por préstamo/día (fecha = fecha_contable o fallback)
+        $pagosPrestamoDia = DB::table('pagos as p')
+            ->selectRaw("
+                p.prestamo_id,
+                {$fechaCobroExpr} AS dia,
+                SUM(COALESCE({$colMontoPago},0)) AS pagado_dia,
+                COUNT(*) AS nro_pagos_dia
+            ")
+            ->where(function($q){
+                $q->where('p.estado', 'Confirmado')
+                  ->orWhereNotNull('p.fecha_cancelado');
+            })
             ->when(
                 Schema::hasColumn('pagos', 'es_retanqueo'),
                 fn($q) => $q->where(function ($qq) {
-                    $qq->whereNull('es_retanqueo')
-                       ->orWhere('es_retanqueo', false)
-                       ->orWhere('es_retanqueo', 0);
+                    $qq->whereNull('p.es_retanqueo')
+                       ->orWhere('p.es_retanqueo', false)
+                       ->orWhere('p.es_retanqueo', 0);
                 })
             )
-            ->whereBetween(DB::raw('DATE(fecha_cancelado)'), [$desde, $hasta])
-            ->selectRaw('prestamo_id, DATE(fecha_cancelado) AS dia, SUM(monto_pagado) AS pagado_dia, COUNT(*) AS nro_pagos_dia')
-            ->groupBy('prestamo_id','dia');
+            ->whereBetween(DB::raw($fechaCobroExpr), [$desde, $hasta])
+            ->groupBy('p.prestamo_id','dia');
 
-        // (C) Neteo por préstamo/día y total por día
+        // C) Neteo por préstamo/día y agrupación por día
         $cobrado = DB::query()
             ->fromSub($pagosPrestamoDia, 'p')
             ->leftJoinSub($abonosPrestamoDia, 'ab', function($j){
                 $j->on('ab.prestamo_id','=','p.prestamo_id')
                   ->on('ab.dia','=','p.dia');
             })
-            ->selectRaw('p.dia AS dia,
-                         SUM(GREATEST(p.pagado_dia - COALESCE(ab.abonado_dia,0),0)) AS total_cobrado,
-                         SUM(p.nro_pagos_dia) AS nro_pagos')
+            ->selectRaw('
+                p.dia AS dia,
+                SUM(GREATEST(p.pagado_dia - COALESCE(ab.abonado_dia,0),0)) AS total_cobrado,
+                SUM(p.nro_pagos_dia) AS nro_pagos
+            ')
             ->groupBy('p.dia');
 
-        // Gastos del día: último registro
-        $gastosUltimoId = GastoDiario::query()
-            ->whereBetween(DB::raw('DATE(fecha)'), [$desde, $hasta])
+        // 3.2 Gastos del día (“último valor manda”)
+        $gastosUltimoId = DB::table('gastos_diarios')
             ->selectRaw('DATE(fecha) AS dia, MAX(id) AS gasto_id')
+            ->whereBetween(DB::raw('DATE(fecha)'), [$desde, $hasta])
             ->groupBy('dia');
 
         $gastos = DB::query()
@@ -111,47 +212,48 @@ class AuditoriaController extends Controller
             ->join('gastos_diarios as gd', 'gd.id', '=', 'g.gasto_id')
             ->selectRaw("g.dia AS dia, gd.monto AS gastos_dia, COALESCE(NULLIF(gd.descripcion,''), '') AS descripciones");
 
-        /**
-         * Asignado neto (del día)
-         * Incluye:
-         *  - Capital asignado a prestamistas (+)
-         *  - Capital devuelto por prestamistas (-)
-         *  - Ingresos al "saldo de asesores/ruta" por cobro de cuotas netas (+)
-         *  - Ingresos por "Cobro de abono (transitorio asesores)" (+)
-         *  - Traslado de abonos a Caja (-)
-         *
-         * NOTA: Los KPIs de cabecera se mantienen como estaban (solo asignación/devolución)
-         * para no cambiar su significado histórico.
-         */
+        // 3.3 Asignado neto (registros_capital)
         $asignado = RegistroCapital::query()
             ->selectRaw("
-                DATE(created_at) AS dia,
+                {$exprLocal('created_at')} AS dia,
                 SUM(
                     CASE
                         WHEN tipo_accion LIKE 'Capital asignado a prestamista:%' THEN monto
                         WHEN tipo_accion LIKE 'Capital devuelto por prestamista:%' THEN -monto
                         WHEN tipo_accion LIKE 'Ingreso recibido por asesor (cuota neta)%' THEN monto
-                        WHEN tipo_accion LIKE 'Cobro de abono (transitorio asesores)%' THEN monto
                         WHEN tipo_accion LIKE 'Traslado de abonos a Caja%' THEN -monto
                         ELSE 0
                     END
                 ) AS asignado_dia
             ")
-            ->whereBetween(DB::raw('DATE(created_at)'), [$desde, $hasta])
+            ->whereBetween('created_at', [$startUtc, $endUtc])
             ->groupBy('dia');
 
-        // Pagos parciales (manuales) y abonos
+        // 3.4 Pagos parciales (manuales) y Abonos
         $parciales = PagoParcialAuditoria::query()
             ->selectRaw("DATE(fecha) AS dia, COALESCE(SUM(monto),0) AS pagos_parciales")
             ->whereBetween(DB::raw('DATE(fecha)'), [$desde, $hasta])
             ->groupBy('dia');
 
         $abonos = Abono::query()
-            ->selectRaw("DATE(COALESCE(fecha_pago, created_at)) AS dia, COALESCE(SUM(monto),0) AS abonos_dia")
-            ->whereBetween(DB::raw('DATE(COALESCE(fecha_pago, created_at))'), [$desde, $hasta])
+            ->selectRaw("
+                DATE(COALESCE(fecha_pago, CONVERT_TZ(created_at,'+00:00','-05:00'))) AS dia,
+                COALESCE(SUM(monto),0) AS abonos_dia
+            ")
+            ->where(function($q) use ($desde, $hasta, $startUtc, $endUtc){
+                $q->where(function($qq) use ($desde, $hasta){
+                    $qq->whereNotNull('fecha_pago')
+                       ->whereBetween(DB::raw('DATE(fecha_pago)'), [$desde, $hasta]);
+                })->orWhere(function($qq) use ($startUtc, $endUtc){
+                    $qq->whereNull('fecha_pago')
+                       ->whereBetween('created_at', [$startUtc, $endUtc]);
+                });
+            })
             ->groupBy('dia');
 
+        // ----------------------------
         // 4) Unión al calendario
+        // ----------------------------
         $rows = DB::query()
             ->fromSub($baseDias, 'cal')
             ->leftJoinSub($prestado,  'pr',   'pr.dia',   '=', 'cal.dia')
@@ -174,23 +276,28 @@ class AuditoriaController extends Controller
             ->orderBy('cal.dia','desc')
             ->get();
 
+        // ----------------------------
         // 5) Balance por fila
+        // ----------------------------
         $auditoria = $rows->map(function ($r) {
             $asignado  = (float)$r->asignado_dia;
             $cobrado   = (float)$r->total_cobrado;
-            $parciales = (float)$r->pagos_parciales;
+            $parciales = (float)$r->pagos_parciales; // (abonos + manuales)
             $gastos    = (float)$r->gastos_dia;
             $prestado  = (float)$r->total_prestado;
 
+            // Entradas - Salidas
             $r->balance = ($asignado + $cobrado + $parciales) - ($gastos + $prestado);
             $r->caja    = $cobrado - $prestado - $gastos;
             $r->descripciones = trim((string)$r->descripciones) !== '' ? $r->descripciones : '-';
             return $r;
         })->values();
 
-        // 6) KPIs cabecera (se conservan con el significado original)
+        // ----------------------------
+        // 6) KPIs cabecera
+        // ----------------------------
         $asignadoTotalRango = (int) RegistroCapital::query()
-            ->whereBetween(DB::raw('DATE(created_at)'), [$desde, $hasta])
+            ->whereBetween('created_at', [$startUtc, $endUtc])
             ->where(function ($q) {
                 $q->where('tipo_accion', 'LIKE', 'Capital asignado a prestamista:%')
                   ->orWhere('tipo_accion', 'LIKE', 'Capital devuelto por prestamista:%');
@@ -200,9 +307,11 @@ class AuditoriaController extends Controller
                         WHEN tipo_accion LIKE 'Capital devuelto por prestamista:%' THEN -monto
                         ELSE 0 END),0) AS neto")
             ->value('neto');
+
+        $hastaUtcEod = $hastaLocal->clone()->timezone('UTC');
 
         $asignadoHistoricoHastaCorte = (int) RegistroCapital::query()
-            ->whereDate('created_at', '<=', $hasta)
+            ->where('created_at', '<=', $hastaUtcEod)
             ->where(function ($q) {
                 $q->where('tipo_accion', 'LIKE', 'Capital asignado a prestamista:%')
                   ->orWhere('tipo_accion', 'LIKE', 'Capital devuelto por prestamista:%');
@@ -213,9 +322,8 @@ class AuditoriaController extends Controller
                         ELSE 0 END),0) AS neto")
             ->value('neto');
 
-        // Prestado histórico hasta el corte (desembolso_neto si existe)
         $prestadoHistoricoHastaCorte = (int) DB::table('prestamos')
-            ->whereDate('fecha_inicio','<=',$hasta)
+            ->where('fecha_inicio', '<=', $hastaUtcEod)
             ->selectRaw(($usaDesembolso
                 ? 'COALESCE(SUM(COALESCE(desembolso_neto, monto_prestado)),0)'
                 : 'COALESCE(SUM(monto_prestado),0)'
@@ -235,7 +343,6 @@ class AuditoriaController extends Controller
 
     // ========= Formularios =========
 
-    // “Último valor manda” + ajuste de caja con delta
     public function storeGasto(Request $request)
     {
         $data = $request->validate([

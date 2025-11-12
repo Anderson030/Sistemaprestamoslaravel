@@ -9,6 +9,7 @@ use App\Models\RegistroCapital;
 use App\Models\CapitalPrestamista;
 use App\Models\User;
 use App\Models\Prestamo;
+use App\Models\Pago;
 
 class CapitalEmpresaController extends Controller
 {
@@ -17,10 +18,10 @@ class CapitalEmpresaController extends Controller
         $capital = EmpresaCapital::latest()->first();
         $caja = (int) ($capital->capital_disponible ?? 0);
 
-        // Dinero circulando (definición final: capital activo en la calle)
+        // Dinero circulando (definición final: saldo por cobrar de préstamos Pendiente)
         [$dineroCirculando, $prestamosActivos] = $this->calcularCirculando();
 
-        // Capital asignado total = asignado a prestamistas + saldo asesores/ruta
+        // Capital asignado total = asignado a prestamistas + saldo asesores/ruta (empresa.capital_asignado_total)
         $capitalAsignadoTotal = $this->calcularCapitalAsignadoTotal($capital);
 
         // Total general = Caja + Circulante + Capital asignado total
@@ -36,7 +37,8 @@ class CapitalEmpresaController extends Controller
             'totalGeneral'                => $totalGeneral,
             'prestamosActivos'            => $prestamosActivos,
             'capitalAsignadoTotal'        => $capitalAsignadoTotal,
-            'capitalAsignadoPrestamistas' => $capitalAsignadoTotal, // alias por compatibilidad de vista
+            // alias por compatibilidad de vista
+            'capitalAsignadoPrestamistas' => $capitalAsignadoTotal,
         ]);
     }
 
@@ -62,18 +64,28 @@ class CapitalEmpresaController extends Controller
 
     /**
      * Dinero circulando (definitivo):
-     *   suma de p.monto_prestado de todos los préstamos con estado = 'Pendiente'
-     *   + conteo de préstamos activos (para mostrar en tarjeta).
+     *  saldo por cobrar de préstamos con estado = 'Pendiente'
+     *  = SUM(p.monto_total) - SUM(pagos.monto_pagado Confirmado) sobre esos mismos préstamos.
      */
     private function calcularCirculando(): array
     {
-        $row = Prestamo::where('estado', 'Pendiente')
-            ->selectRaw('COALESCE(SUM(monto_prestado),0) AS capital_en_circulacion,
-                         COUNT(*) AS prestamos_activos')
-            ->first();
+        // Total a cobrar de préstamos activos (Pendiente)
+        $totPendiente = (int) Prestamo::where('estado', 'Pendiente')
+            ->selectRaw('COALESCE(SUM(monto_total),0) AS tot')
+            ->value('tot');
 
-        $dineroCirculando = (int) ($row->capital_en_circulacion ?? 0);
-        $prestamosActivos = (int) ($row->prestamos_activos ?? 0);
+        // Total pagado confirmado sobre esos préstamos (usamos subconsulta para limitar a Pendiente)
+        $totPagado = (int) Pago::where('estado', 'Confirmado')
+            ->whereIn('prestamo_id', function ($q) {
+                $q->select('id')->from('prestamos')->where('estado', 'Pendiente');
+            })
+            ->selectRaw('COALESCE(SUM(monto_pagado),0) AS pag')
+            ->value('pag');
+
+        $dineroCirculando = max(0, $totPendiente - $totPagado);
+
+        // Cantidad de préstamos activos
+        $prestamosActivos = (int) Prestamo::where('estado', 'Pendiente')->count();
 
         return [$dineroCirculando, $prestamosActivos];
     }

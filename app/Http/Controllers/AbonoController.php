@@ -10,63 +10,58 @@ use App\Models\RegistroCapital;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Schema;
+use Carbon\Carbon;
 
 class AbonoController extends Controller
 {
     /**
      * Registra un abono (pago parcial) a una cuota específica de un préstamo.
-     * Robusto para que NUNCA marque como completo si el monto es menor a la cuota fija.
+     * - Nunca marca como completa si el total abonado < valor fijo de la cuota.
+     * - Si completa, confirma el Pago y fija pagos.monto_pagado = valor fijo de la cuota (en pesos).
+     * - El dinero va al bucket transitorio: empresa.capital_asignado_total (no a caja).
      */
     public function store(Request $request, $prestamoId)
     {
-        // 0) Validación de entrada
+        // 0) Validación
         $request->validate([
             'nro_cuota'  => 'required|integer|min:1',
             // Permitimos "150.000", "150,000" o "150000"
             'monto'      => ['required', 'string', 'max:50'],
             'referencia' => 'nullable|string|max:255',
-            // IMPORTANTE: el modal no envía fecha; permitir null y usar hoy por defecto
+            // nullable: si no viene, se usa hoy (DATE local)
             'fecha_pago' => 'nullable|date',
         ]);
 
-        // Helpers para trabajar "en centavos" (en tu caso pesos enteros normalizados)
+        // Helpers de normalización
         $toCents = function ($val) {
             if ($val === null) return 0;
-            // Quita todo lo que no sea dígito: "150.000" -> "150000", "150,000.50" -> "15000050"
-            $clean = preg_replace('/[^\d]/', '', (string)$val);
+            $clean = preg_replace('/[^\d]/', '', (string)$val); // “150.000,50” -> “15000050”
             return (int) $clean;
         };
-        // Si manejas decimales reales, cambia a dividir entre 100.
+        // Trabajamos en pesos enteros; si usaras decimales reales, cambia a dividir /100
         $toPesos = fn (int $cents) => (float) $cents;
 
-        // 1) Cargar préstamo
+        // 1) Préstamo
         $prestamo = Prestamo::findOrFail($prestamoId);
 
-        // 2) Validar rango de cuota
+        // 2) Validar cuota
         $nroCuota    = (int) $request->nro_cuota;
         $totalCuotas = max(1, (int) $prestamo->nro_cuotas);
         if ($nroCuota > $totalCuotas) {
-            return back()
-                ->with('mensaje', 'El número de cuota no existe para este préstamo.')
-                ->with('icono', 'error');
+            return back()->with('mensaje', 'El número de cuota no existe para este préstamo.')->with('icono', 'error');
         }
 
-        // 3) Ubicar el registro de pago que representa esa cuota
-        //    (tu tabla pagos no tiene nro_cuota, así que usamos orden por id)
+        // 3) Ubicar el Pago (no hay nro_cuota en tabla; usamos orden por id)
         $pago = Pago::where('prestamo_id', $prestamo->id)
-            ->orderBy('id')               // orden estable por creación
-            ->skip($nroCuota - 1)         // 1->0, 2->1, etc.
-            ->take(1)
+            ->orderBy('id')
+            ->skip($nroCuota - 1)
             ->first();
 
         if (!$pago) {
-            return back()
-                ->with('mensaje', 'No se encontró el registro de pago para esa cuota.')
-                ->with('icono', 'error');
+            return back()->with('mensaje', 'No se encontró el registro de pago para esa cuota.')->with('icono', 'error');
         }
 
-        // 4) Determinar el VALOR FIJO de la cuota.
-        //    ¡Nunca usar pagos.monto_pagado (suele ser acumulado)!
+        // 4) Valor FIJO de la cuota (en pesos)
         $montoCuotaFijo = null;
         foreach (['monto_cuota', 'monto', 'valor_cuota', 'total_cuota'] as $col) {
             if (isset($pago->{$col}) && is_numeric($pago->{$col}) && $pago->{$col} > 0) {
@@ -74,83 +69,67 @@ class AbonoController extends Controller
                 break;
             }
         }
-
-        // Fallback por datos del préstamo (tu caso real: 1.500.000 / 10 = 150.000)
         if (!$montoCuotaFijo || $montoCuotaFijo <= 0) {
             if (
                 isset($prestamo->monto_total) &&
                 isset($prestamo->nro_cuotas) &&
                 (int) $prestamo->nro_cuotas > 0
             ) {
-                $montoCuotaFijo = round(
-                    ((float) $prestamo->monto_total) / (int) $prestamo->nro_cuotas,
-                    2
-                );
+                $montoCuotaFijo = round(((float) $prestamo->monto_total) / (int) $prestamo->nro_cuotas, 2);
             }
         }
-
         if (!$montoCuotaFijo || $montoCuotaFijo <= 0) {
-            return back()
-                ->with('mensaje', 'No se pudo determinar el valor fijo de la cuota (revisa columnas de pagos o los datos del préstamo).')
-                ->with('icono', 'error');
+            return back()->with('mensaje', 'No se pudo determinar el valor fijo de la cuota.')->with('icono', 'error');
         }
 
-        // 5) Normalizar a "centavos"
         $montoCuotaCents = $toCents($montoCuotaFijo);
 
-        // 6) Transacción
+        // 5) Transacción
         return DB::transaction(function () use ($request, $prestamo, $pago, $nroCuota, $montoCuotaCents, $toCents, $toPesos) {
 
-            $fechaPago = $request->filled('fecha_pago')
-                ? date('Y-m-d', strtotime($request->fecha_pago))
-                : now()->toDateString();
+            // Fecha local para el abono (DATE para UI/reportes)
+            $fechaPagoLocal = $request->filled('fecha_pago')
+                ? Carbon::parse($request->fecha_pago, 'America/Bogota')->toDateString()
+                : Carbon::now('America/Bogota')->toDateString();
 
-            // Total abonado previo a esa cuota (centavos)
+            // 6) Total abonado previo a esa cuota
             $abonadoActual = (float) Abono::where('prestamo_id', $prestamo->id)
                 ->where('nro_cuota', $nroCuota)
                 ->selectRaw('COALESCE(SUM(COALESCE(monto, monto_abonado, 0)), 0) as total')
                 ->value('total');
 
             $abonadoActualCents = $toCents($abonadoActual);
+            $restanteCents      = max(0, $montoCuotaCents - $abonadoActualCents);
 
-            // Restante a cubrir (centavos)
-            $restanteCents = max(0, $montoCuotaCents - $abonadoActualCents);
-
-            // Monto ingresado normalizado (centavos) y cap al restante
+            // 7) Monto ingresado normalizado (cap al restante)
             $montoIngresoCents = min($toCents($request->monto), $restanteCents);
-
             if ($montoIngresoCents <= 0) {
-                return back()
-                    ->with('mensaje', 'La cuota ya está completa o el monto es inválido.')
-                    ->with('icono', 'info');
+                return back()->with('mensaje', 'La cuota ya está completa o el monto es inválido.')->with('icono', 'info');
             }
+            $montoIngresoPesos = $toPesos($montoIngresoCents);
 
-            // 7) Registrar el abono
-            $montoIngresoPesos = $toPesos($montoIngresoCents); // guarda en mismo formato de tu BD
-
+            // 8) Registrar el abono
             $dataCreate = [
                 'prestamo_id'   => $prestamo->id,
                 'nro_cuota'     => $nroCuota,
-                'monto'         => $montoIngresoPesos,   // esquema nuevo
-                'monto_abonado' => $montoIngresoPesos,   // compat esquema antiguo
+                'monto'         => $montoIngresoPesos,   // esquema nuevo (en pesos)
+                'monto_abonado' => $montoIngresoPesos,   // compat esquema antiguo (en pesos)
                 'referencia'    => $request->referencia,
-                'fecha_pago'    => $fechaPago,
+                'fecha_pago'    => $fechaPagoLocal,      // DATE local (para UI)
             ];
-
             if (Schema::hasColumn('abonos', 'user_id')) {
                 $dataCreate['user_id'] = auth()->id() ?? null;
             }
             if (Schema::hasColumn('abonos', 'estado')) {
                 $dataCreate['estado'] = 'Confirmado';
             }
-
             Abono::create($dataCreate);
 
-            // 8) Pasar dinero al bucket transitorio (NO caja)
+            // 9) Sumar al bucket de ruta (NO caja) con clamp
             $empresa = EmpresaCapital::query()->lockForUpdate()->latest('id')->first();
             if ($empresa && Schema::hasColumn('empresa_capital', 'capital_asignado_total')) {
-                $empresa->capital_anterior       = (int) ($empresa->capital_asignado_total ?? 0);
-                $empresa->capital_asignado_total = (int) ($empresa->capital_asignado_total ?? 0) + (int) $montoIngresoPesos;
+                $actual = max(0, (int) ($empresa->capital_asignado_total ?? 0));
+                $empresa->capital_asignado_total = $actual + (int) $montoIngresoPesos;
                 $empresa->save();
 
                 RegistroCapital::create([
@@ -160,7 +139,7 @@ class AbonoController extends Controller
                 ]);
             }
 
-            // 9) Si se completó la cuota, marcar Pago como Confirmado (comparación en centavos)
+            // 10) ¿Se completó la cuota con este abono? (comparación en centavos)
             $abonadoTotal = (float) Abono::where('prestamo_id', $prestamo->id)
                 ->where('nro_cuota', $nroCuota)
                 ->selectRaw('COALESCE(SUM(COALESCE(monto, monto_abonado, 0)), 0) as total')
@@ -170,15 +149,21 @@ class AbonoController extends Controller
 
             if ($abonadoTotalCents >= $montoCuotaCents) {
                 if ($pago->estado !== 'Confirmado') {
-                    $pago->estado          = 'Confirmado';
-                    $pago->fecha_cancelado = $fechaPago; // fecha del último abono
+                    $pago->estado = 'Confirmado';
+
+                    // Guardar fecha_cancelado como fin de día local convertido a UTC
+                    // => Auditorías (CONVERT_TZ) lo verá en el mismo día local del abono
+                    $pago->fecha_cancelado = Carbon::parse($fechaPagoLocal . ' 23:59:59', 'America/Bogota')->timezone('UTC');
+
+                    // MUY IMPORTANTE: fija el monto_pagado = valor fijo de la cuota (en pesos)
+                    if (Schema::hasColumn('pagos', 'monto_pagado')) {
+                        $pago->monto_pagado = (float) ($montoCuotaCents); // en tu esquema trabajas pesos enteros (coherente con toPesos)
+                    }
                     $pago->save();
                 }
             }
 
-            return back()
-                ->with('mensaje', 'Abono registrado correctamente.')
-                ->with('icono', 'success');
+            return back()->with('mensaje', 'Abono registrado correctamente.')->with('icono', 'success');
         });
     }
 }

@@ -6,75 +6,88 @@ use App\Models\CapitalPrestamista;
 use App\Models\User;
 use App\Models\Prestamo;
 use App\Models\Pago;
-use App\Models\RegistroCapital;           // log de asignaciones/devoluciones
+use App\Models\RegistroCapital;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
 
 class PrestamistaController extends Controller
 {
+    /**
+     * Listado de prestamistas con métricas agregadas
+     * (solo ADMIN/SUPERVISOR/DEV ven todo; un PRESTAMISTA no entra aquí con restricciones
+     *  porque es un tablero general).
+     */
     public function index()
     {
-        // Usuarios con rol válido (excluye DEV)
-        $prestamistas = User::whereHas('roles', function ($q) {
+        // Usuarios válidos (excluye DEV explícitamente)
+        $usuarios = User::with('roles')
+            ->whereHas('roles', function ($q) {
                 $q->whereIn('name', ['ADMINISTRADOR', 'SUPERVISOR', 'PRESTAMISTA']);
             })
             ->whereDoesntHave('roles', function ($q) {
                 $q->where('name', 'DEV');
             })
-            ->get()
-            ->map(function ($usuario) {
+            ->get();
 
-                // Préstamos del usuario (no reportados)
-                $prestamos = Prestamo::where('idusuario', $usuario->id)
-                    ->whereNull('reportado')
-                    ->get();
+        $prestamistas = $usuarios->map(function ($usuario) {
+            // Préstamos NO reportados del usuario
+            $prestamos = Prestamo::query()
+                ->where('idusuario', $usuario->id)
+                ->whereNull('reportado')
+                ->get(['id','cliente_id','monto_prestado','monto_total']);
 
-                $totalPrestado  = (int) $prestamos->sum('monto_prestado');
-                $totalRecaudado = (int) $prestamos->sum('monto_total');
-                $idsPrestamos   = $prestamos->pluck('id');
+            $ids = $prestamos->pluck('id');
 
-                // Pagos confirmados (no reportados)
-                $totalCobrado = (int) Pago::whereIn('prestamo_id', $idsPrestamos)
+            // Sumas (usa float por DECIMAL)
+            $totalPrestado  = (float) $prestamos->sum('monto_prestado');
+            $totalRecaudado = (float) $prestamos->sum('monto_total');
+
+            // Pagos confirmados NO reportados de esos préstamos
+            $totalCobrado = 0.0;
+            if ($ids->isNotEmpty()) {
+                $totalCobrado = (float) Pago::whereIn('prestamo_id', $ids)
                     ->where('estado', 'Confirmado')
                     ->whereNull('reportado')
                     ->sum('monto_pagado');
+            }
 
-                // # de clientes distintos atendidos
-                $clientesAtendidos = $prestamos->unique('cliente_id')->count();
+            // # clientes distintos
+            $clientesAtendidos = $prestamos->unique('cliente_id')->count();
 
-                // Capital asignado al prestamista
-                $capital = CapitalPrestamista::where('user_id', $usuario->id)->first();
-                $capitalAsignado = $capital ? (int) $capital->monto_asignado : 0;
+            // Capital asignado actual a ese prestamista (afuera)
+            $capital = CapitalPrestamista::where('user_id', $usuario->id)->first();
+            $capitalAsignado = (float) ($capital->monto_asignado ?? 0);
 
-                // Ganancia proyectada (intereses) y “real” cobrada proporcionalmente
-                $gananciaProyectada = $totalRecaudado - $totalPrestado;
-                $gananciaReal = 0;
-                if ($totalRecaudado > 0 && $totalCobrado > 0) {
-                    // Parte capital ya “recuperada” = (cobrado / recaudado) * capital
-                    $capitalRecuperadoProporcional = ($totalCobrado / $totalRecaudado) * $totalPrestado;
-                    $gananciaReal = $totalCobrado - $capitalRecuperadoProporcional;
-                }
+            // Ganancia proyectada = totalRecaudado - totalPrestado
+            $gananciaProyectada = max(0.0, $totalRecaudado - $totalPrestado);
 
-                return [
-                    'usuario'          => $usuario,
-                    'capital_asignado' => $capitalAsignado,
-                    'prestado'         => $totalPrestado,
-                    'cobrado'          => $totalCobrado,
-                    'recaudado'        => $totalRecaudado,
-                    'ganancia'         => $gananciaProyectada,
-                    'ganancia_real'    => $gananciaReal,
-                    'clientes'         => $clientesAtendidos,
-                ];
-            });
+            // Ganancia “real” aproximada: de lo cobrado, descuenta capital proporcional
+            $gananciaReal = 0.0;
+            if ($totalRecaudado > 0 && $totalCobrado > 0) {
+                $capitalRecuperadoProporcional = ($totalCobrado / $totalRecaudado) * $totalPrestado;
+                $gananciaReal = max(0.0, $totalCobrado - $capitalRecuperadoProporcional);
+            }
 
-        // Totales generales para el pie
-        $totalCapitalAsignado   = (int) $prestamistas->sum('capital_asignado');
-        $totalPrestado          = (int) $prestamistas->sum('prestado');
-        $totalCobrado           = (int) $prestamistas->sum('cobrado');
-        $totalRecaudado         = (int) $prestamistas->sum('recaudado');
-        $totalGanancia          = (int) $prestamistas->sum('ganancia');
-        $totalGananciaCobrada   = (int) $prestamistas->sum('ganancia_real');
-        $totalClientes          = (int) $prestamistas->sum('clientes');
+            return [
+                'usuario'          => $usuario,
+                'capital_asignado' => $capitalAsignado,
+                'prestado'         => $totalPrestado,
+                'cobrado'          => $totalCobrado,
+                'recaudado'        => $totalRecaudado,
+                'ganancia'         => $gananciaProyectada,
+                'ganancia_real'    => $gananciaReal,
+                'clientes'         => $clientesAtendidos,
+            ];
+        });
+
+        // Totales del pie
+        $totalCapitalAsignado   = (float) $prestamistas->sum('capital_asignado');
+        $totalPrestado          = (float) $prestamistas->sum('prestado');
+        $totalCobrado           = (float) $prestamistas->sum('cobrado');
+        $totalRecaudado         = (float) $prestamistas->sum('recaudado');
+        $totalGanancia          = (float) $prestamistas->sum('ganancia');
+        $totalGananciaCobrada   = (float) $prestamistas->sum('ganancia_real');
+        $totalClientes          = (int)   $prestamistas->sum('clientes');
 
         return view('admin.prestamistas.index', compact(
             'prestamistas',
@@ -88,6 +101,10 @@ class PrestamistaController extends Controller
         ));
     }
 
+    /**
+     * Detalle de un prestamista.
+     * - Si el usuario autenticado es PRESTAMISTA, solo puede ver su propio detalle.
+     */
     public function detalle($id)
     {
         $usuario = User::with('roles')->findOrFail($id);
@@ -96,31 +113,52 @@ class PrestamistaController extends Controller
             abort(403, 'Este usuario no es un prestamista válido.');
         }
 
+        // Regla de visibilidad: un PRESTAMISTA solo puede ver su propio detalle
+        if (auth()->user()->hasRole('PRESTAMISTA') && (int) $usuario->id !== (int) auth()->id()) {
+            abort(403, 'No tienes permiso para ver este detalle.');
+        }
+
         $prestamos = Prestamo::where('idusuario', $usuario->id)
             ->whereNull('reportado')
             ->with('cliente')
-            ->get();
+            ->get(['id','cliente_id','monto_prestado','monto_total','estado']);
 
         $idsPrestamos = $prestamos->pluck('id');
 
-        $pagos = Pago::whereIn('prestamo_id', $idsPrestamos)
-            ->where('estado', 'Confirmado')
-            ->whereNull('reportado')
-            ->with(['prestamo.cliente'])
-            ->get();
+        $pagos = collect();
+        if ($idsPrestamos->isNotEmpty()) {
+            $pagos = Pago::whereIn('prestamo_id', $idsPrestamos)
+                ->where('estado', 'Confirmado')
+                ->whereNull('reportado')
+                ->with(['prestamo.cliente'])
+                ->orderBy('fecha_cancelado')
+                ->get();
+        }
 
         return view('admin.prestamistas.show', compact('usuario', 'prestamos', 'pagos'));
     }
 
     /**
-     * Resetea indicadores (marca todo como "reportado" y pone capital asignado en 0).
-     * No crea registros de devolución.
+     * Resetea indicadores globales (marca TODO como reportado y pone capital prestamista en 0).
+     * Recomendado SOLO para ADMIN/SUPERVISOR. No crea registros de devolución.
      */
     public function reset()
     {
-        DB::table('prestamos')->update(['reportado' => now()]);
-        DB::table('pagos')->update(['reportado' => now()]);
-        DB::table('capital_prestamistas')->update(['monto_asignado' => 0, 'monto_disponible' => 0]);
+        if (!auth()->user()->hasAnyRole(['ADMINISTRADOR', 'SUPERVISOR'])) {
+            abort(403, 'No tienes permiso para esta operación.');
+        }
+
+        DB::transaction(function () {
+            // Marca todo como reportado con timestamp en TZ de la app
+            DB::table('prestamos')->update(['reportado' => now()]);
+            DB::table('pagos')->update(['reportado' => now()]);
+
+            // Capital de prestamistas a cero (asignado y disponible)
+            DB::table('capital_prestamistas')->update([
+                'monto_asignado'   => 0,
+                'monto_disponible' => 0,
+            ]);
+        });
 
         return redirect()
             ->route('admin.prestamistas.index')
@@ -129,13 +167,15 @@ class PrestamistaController extends Controller
     }
 
     /**
-     * Elimina TODO el capital del prestamista y lo devuelve al capital de empresa.
-     * Registra el movimiento en registros_capital con tipo:
-     * "Capital devuelto por prestamista: NOMBRE"
-     * Esto es lo que usa Auditorías como valor NEGATIVO en "Asignado (del día)".
+     * Devuelve TODO el capital asignado de un prestamista a la caja de empresa
+     * y deja trazabilidad en registros_capital.
      */
     public function eliminarCapital($id)
     {
+        if (!auth()->user()->hasAnyRole(['ADMINISTRADOR', 'SUPERVISOR'])) {
+            abort(403, 'No tienes permiso para esta operación.');
+        }
+
         $usuario = User::findOrFail($id);
 
         if (
@@ -144,32 +184,32 @@ class PrestamistaController extends Controller
         ) {
             DB::beginTransaction();
             try {
-                // Bloqueamos el registro del prestamista
+                // Bloquear el registro del prestamista
                 $capital = CapitalPrestamista::where('user_id', $usuario->id)
                     ->lockForUpdate()
                     ->first();
 
-                if ($capital && (int)$capital->monto_asignado > 0) {
-                    $montoDevolver = (int) $capital->monto_asignado;
+                if ($capital && (float) $capital->monto_asignado > 0) {
+                    $montoDevolver = (float) $capital->monto_asignado;
 
                     // 1) Actualizar capital de empresa (último registro)
                     $empresa = DB::table('empresa_capital')->latest('id')->lockForUpdate()->first();
                     if ($empresa) {
                         DB::table('empresa_capital')->where('id', $empresa->id)->update([
-                            'capital_anterior'   => $empresa->capital_disponible,
-                            'capital_disponible' => $empresa->capital_disponible + $montoDevolver,
+                            'capital_anterior'   => (int) $empresa->capital_disponible,
+                            'capital_disponible' => (int) $empresa->capital_disponible + (int) round($montoDevolver, 0),
                         ]);
                     }
 
-                    // 2) Registrar devolución para que Auditorías lo refleje
+                    // 2) Registrar devolución (Auditorías lo toma como negativo en "Asignado del día")
                     RegistroCapital::create([
-                        'monto'       => $montoDevolver,
+                        'monto'       => (int) round($montoDevolver, 0),
                         'user_id'     => auth()->id(),
                         'tipo_accion' => 'Capital devuelto por prestamista: ' . $usuario->name,
                     ]);
 
                     // 3) Poner en cero el capital del prestamista
-                    $capital->monto_disponible = max(0, (int)$capital->monto_disponible - $montoDevolver);
+                    $capital->monto_disponible = max(0, (int) $capital->monto_disponible - (int) round($montoDevolver, 0));
                     $capital->monto_asignado   = 0;
                     $capital->save();
                 }
