@@ -16,30 +16,35 @@ class NotificacionController extends Controller
      * Lista pagos para notificar.
      * - Por defecto solo "Pendiente".
      * - PRESTAMISTA: solo sus préstamos.
+     *
      * Filtros opcionales:
-     *   estado: Pendiente|Confirmado|Todos (default: Pendiente)
-     *   q: busca por nombre/cedula del cliente
+     *   estado: Pendiente | Confirmado | Todos (default: Pendiente)
+     *   q: busca por nombre/cédula del cliente
      */
     public function index(Request $request)
     {
         $estado = $request->input('estado', 'Pendiente'); // 'Pendiente' | 'Confirmado' | 'Todos'
         $q      = trim((string) $request->input('q', ''));
 
-        $tz = config('app.timezone', 'America/Bogota');
+        $tz    = config('app.timezone', 'America/Bogota');
         $today = Carbon::now($tz)->toDateString();
 
         $pagos = Pago::query()
             ->with(['prestamo.cliente'])
+
+            // Filtrar por estado (salvo "Todos")
             ->when($estado !== 'Todos', function ($q2) use ($estado) {
                 $q2->where('estado', $estado);
             })
-            // Visibilidad de PRESTAMISTA: solo préstamos del usuario
+
+            // Visibilidad de PRESTAMISTA: solo préstamos del usuario autenticado
             ->when(auth()->user()->hasRole('PRESTAMISTA'), function ($q2) {
                 $q2->whereHas('prestamo', function ($qq) {
                     $qq->where('idusuario', auth()->id());
                 });
             })
-            // Búsqueda por cliente
+
+            // Búsqueda por cliente (documento, nombre, apellidos)
             ->when($q !== '', function ($q2) use ($q) {
                 $q2->whereHas('prestamo.cliente', function ($qq) use ($q) {
                     $qq->where('nro_documento', 'like', "%{$q}%")
@@ -47,17 +52,26 @@ class NotificacionController extends Controller
                        ->orWhere('apellidos', 'like', "%{$q}%");
                 });
             })
+
+            // Orden: primero las cuotas más antiguas
             ->orderBy('fecha_pago', 'asc')
-            ->paginate(30)
+
+            // IMPORTANTE: mandamos hasta 500 registros para que DataTables
+            // tenga todo el dataset (antes eran solo 30)
+            ->paginate(500)
             ->withQueryString();
 
         // Decoramos cada pago con flags de vencimiento (según TZ)
         $pagos->getCollection()->transform(function ($p) use ($tz, $today) {
-            $fecha = $p->fecha_pago ? Carbon::parse($p->fecha_pago, $tz)->toDateString() : null;
+            $fecha = $p->fecha_pago
+                ? Carbon::parse($p->fecha_pago, $tz)->toDateString()
+                : null;
 
-            $p->vence_hoy   = $fecha === $today;
-            $p->vencido     = $fecha !== null && $fecha <  $today && $p->estado !== 'Confirmado';
-            $p->vence_pronto= $fecha !== null && $fecha >  $today && Carbon::parse($fecha)->diffInDays($today) <= 3;
+            $p->vence_hoy     = $fecha === $today;
+            $p->vencido       = $fecha !== null && $fecha < $today && $p->estado !== 'Confirmado';
+            $p->vence_pronto  = $fecha !== null
+                             && $fecha > $today
+                             && Carbon::parse($fecha)->diffInDays($today) <= 3;
 
             return $p;
         });
@@ -83,8 +97,10 @@ class NotificacionController extends Controller
 
         // Seguridad de visibilidad para PRESTAMISTA
         if (auth()->user()->hasRole('PRESTAMISTA')) {
-            if ((int)optional($pago->prestamo)->idusuario !== (int)auth()->id()) {
-                return back()->with('mensaje', 'No puedes notificar pagos de otro prestamista.')->with('icono', 'error');
+            if ((int) optional($pago->prestamo)->idusuario !== (int) auth()->id()) {
+                return back()
+                    ->with('mensaje', 'No puedes notificar pagos de otro prestamista.')
+                    ->with('icono', 'error');
             }
         }
 
